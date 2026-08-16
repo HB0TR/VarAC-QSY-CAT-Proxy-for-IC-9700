@@ -1,7 +1,9 @@
-name: Update documentation JPG screenshots
+name: Finalize JPG documentation screenshots
 
 on:
   push:
+    branches:
+      - main
     paths:
       - ".github/workflows/jpg-screenshot-update.yml"
 
@@ -9,34 +11,20 @@ permissions:
   contents: write
 
 jobs:
-  update:
+  finalize:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Reconstruct new JPG screenshots
+      - name: Replace old screenshots and clean up
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin jpg-screenshot-assets
+
           mkdir -p docs/images
-          for f in app-01.txt app-02.txt app-03.txt; do
-            git show "origin/jpg-screenshot-assets:.jpg-assets/$f"
-          done | tr -d '\n\r ' | base64 -d > docs/images/application-launcher.jpg
-          for f in rig-01.txt rig-02.txt rig-03.txt; do
-            git show "origin/jpg-screenshot-assets:.jpg-assets/$f"
-          done | tr -d '\n\r ' | base64 -d > docs/images/varac-rig-control.jpg
-          file docs/images/application-launcher.jpg
-          file docs/images/varac-rig-control.jpg
-          test "$(head -c 2 docs/images/application-launcher.jpg | xxd -p)" = "ffd8"
-          test "$(head -c 2 docs/images/varac-rig-control.jpg | xxd -p)" = "ffd8"
+          mv -f "docs/images/Applications launcher.jpg" docs/images/application-launcher.jpg
+          mv -f "docs/images/RIG-Settings.jpg" docs/images/varac-rig-control.jpg
 
-      - name: Update README and remove old PNG screenshots
-        shell: bash
-        run: |
-          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           p = Path('README.md')
@@ -45,23 +33,13 @@ jobs:
           s = s.replace('docs/images/varac-rig-control.png', 'docs/images/varac-rig-control.jpg')
           p.write_text(s, encoding='utf-8')
           PY
-          rm -f docs/images/application-launcher.png docs/images/varac-rig-control.png
 
-      - name: Commit JPG screenshots
-        shell: bash
-        run: |
-          set -euo pipefail
+          rm -f docs/images/application-launcher.png docs/images/varac-rig-control.png
+          rm -rf .jpg-assets
+          rm -f .github/workflows/jpg-screenshot-update.yml
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md docs/images/
-          git commit -m "Replace documentation screenshots with clearer JPG images"
-          git push origin HEAD:main
-
-      - name: Remove temporary asset branch and helper workflow
-        shell: bash
-        run: |
-          set -euo pipefail
-          git push origin --delete jpg-screenshot-assets || true
-          git rm -f .github/workflows/jpg-screenshot-update.yml
-          git commit -m "Clean up JPG screenshot update helper"
+          git add -A
+          git commit -m "Use clearer JPG screenshots in documentation"
           git push origin HEAD:main
