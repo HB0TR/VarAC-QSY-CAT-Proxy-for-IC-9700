@@ -98,7 +98,9 @@ For QO-100 operation, use **VARA SAT** as the modem application in the VarAC app
 Modem / application: VARA SAT
 ```
 
-![VarAC Application Launcher configuration](docs/images/application-launcher.png)
+<a href="docs/images/application-launcher.png"><img src="docs/images/application-launcher.png" alt="VarAC Application Launcher configuration" width="100%"></a>
+
+*Click the screenshot to open the image directly.*
 
 The screenshot shows the proxy batch file added to the VarAC Application Launcher. The exact local path will depend on where you extracted or cloned the project.
 
@@ -135,7 +137,9 @@ Port:              4532
 
 The proxy accepts the Hamlib-style `T 1` / `T 0` commands used for PTT and translates them to IC-9700 CI-V PTT commands.
 
-![VarAC RIG Control configuration for the IC-9700 proxy](docs/images/varac-rig-control.png)
+<a href="docs/images/varac-rig-control.png"><img src="docs/images/varac-rig-control.png" alt="VarAC RIG Control configuration for the IC-9700 proxy" width="100%"></a>
+
+*Click the screenshot to open the image directly.*
 
 The screenshot shows the working VarAC RIG configuration used with this proxy. The text settings above are the authoritative values.
 
