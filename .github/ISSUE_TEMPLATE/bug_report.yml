@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a CAT/QSY, PTT, or IC-9700 interoperability problem
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - CAT / QSY
+        - PTT
+        - Both CAT / QSY and PTT
+        - Startup / COM port
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: proxy
+    attributes:
+      label: Proxy version
+      placeholder: V5.00
+    validations:
+      required: true
+  - type: input
+    id: varac
+    attributes:
+      label: VarAC version
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: IC-9700 firmware version
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: Include CAT host/port, PTT host/port, COM port, IF frequencies and converter arrangement. Remove anything you do not want public.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant proxy log excerpt
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I reproduced the issue using a safe TX drive level / test arrangement.
+          required: true
