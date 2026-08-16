@@ -1,0 +1,32 @@
+name: PowerShell syntax check
+
+on:
+  push:
+    paths:
+      - "**/*.ps1"
+      - ".github/workflows/powershell-syntax.yml"
+  pull_request:
+    paths:
+      - "**/*.ps1"
+      - ".github/workflows/powershell-syntax.yml"
+
+jobs:
+  syntax:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell source without executing it
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.\VarAC_QSY-CAT_Proxy_IC-9700_HB0TR.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+          Write-Host 'PowerShell syntax OK.'
