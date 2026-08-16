@@ -1,11 +1,11 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite the project and author."
 title: "VarAC QSY-CAT Proxy for IC-9700"
-version: "5.00"
+version: "5.01"
 date-released: 2026-08-16
 authors:
   - family-names: "Franz"
     given-names: "Stefan"
     alias: "HBØTR"
-url: "https://www.qrz.com/db/HB0TR"
+url: "https://github.com/HB0TR/VarAC-QSY-CAT-Proxy-for-IC-9700"
 license: MIT
