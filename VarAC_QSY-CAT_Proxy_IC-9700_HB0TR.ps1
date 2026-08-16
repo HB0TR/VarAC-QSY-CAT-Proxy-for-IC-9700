@@ -1,4 +1,4 @@
-﻿# VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.00
+﻿# VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.01
 # Author: HBØTR Stefan Franz | https://www.qrz.com/db/HB0TR
 # Copyright (c) 2026 Stefan Franz, HBØTR
 # SPDX-License-Identifier: MIT
@@ -42,6 +42,17 @@ $rxMin     = [Int64](Get-Cfg $cfg 'RX_IF_MIN_HZ' '433000000')
 $rxMax     = [Int64](Get-Cfg $cfg 'RX_IF_MAX_HZ' '434000000')
 $txMin     = [Int64](Get-Cfg $cfg 'TX_IF_MIN_HZ' '144000000')
 $txMax     = [Int64](Get-Cfg $cfg 'TX_IF_MAX_HZ' '146000000')
+$startupSetFreq = ((Get-Cfg $cfg 'STARTUP_SET_FREQUENCIES' '1') -ne '0')
+
+# Human/station-level startup setting: actual QO-100 downlink RF frequency.
+# Use integer Hz in the INI to avoid locale-dependent decimal parsing.
+$qo100DlRfHz    = [Int64](Get-Cfg $cfg 'QO100_DL_RF_HZ' '10489595000')
+$rxConverterLoHz = [Int64](Get-Cfg $cfg 'RX_CONVERTER_LO_HZ' '10056000000')
+
+# Derive the IC-9700 IFs from the QO-100 RF frequency.
+$startupRxHz    = $qo100DlRfHz - $rxConverterLoHz
+$startupTxHz    = $startupRxHz - $rxTxDelta
+
 $ignoreMode= ((Get-Cfg $cfg 'IGNORE_VARAC_MODE_COMMANDS' '1') -ne '0')
 $logPath   = Join-Path $PSScriptRoot (Get-Cfg $cfg 'LOG_FILE' 'QSY-CAT_Proxy.log')
 
@@ -57,7 +68,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 
-namespace QO100CatProxyV5
+namespace QO100CatProxyV501
 {
     public sealed class Proxy : IDisposable
     {
@@ -70,21 +81,29 @@ namespace QO100CatProxyV5
         private readonly SerialPort radio;
         private readonly byte civ;
         private readonly long delta, rxMin, rxMax, txMin, txMax;
+        private readonly bool startupSetFreq;
+        private readonly long startupRxHz, startupTxHz;
         private readonly bool ignoreMode;
         private readonly string logFile;
         private readonly List<byte> appBuffer = new List<byte>();
         private readonly StringBuilder hamBuffer = new StringBuilder();
         private long lastRxHz = -1;
         private bool pttState = false;
+        private long lastTxHz = -1;
 
         public Proxy(string host, int port, string hamHost, int hamPort, string radioPort, int baud, byte civAddress,
                      long deltaHz, long rxIfMinHz, long rxIfMaxHz, long txIfMinHz, long txIfMaxHz,
+                     bool startupSetFrequencies, long startupRxFrequencyHz, long startupTxFrequencyHz,
                      bool ignoreModeCommands, string logPath)
         {
             listener = new TcpListener(IPAddress.Parse(host), port);
             hamListener = new TcpListener(IPAddress.Parse(hamHost), hamPort);
             civ = civAddress; delta = deltaHz; rxMin = rxIfMinHz; rxMax = rxIfMaxHz;
-            txMin = txIfMinHz; txMax = txIfMaxHz; ignoreMode = ignoreModeCommands; logFile = logPath;
+            txMin = txIfMinHz; txMax = txIfMaxHz;
+            startupSetFreq = startupSetFrequencies;
+            startupRxHz = startupRxFrequencyHz;
+            startupTxHz = startupTxFrequencyHz;
+            ignoreMode = ignoreModeCommands; logFile = logPath;
             radio = new SerialPort(radioPort, baud, Parity.None, 8, StopBits.One);
             radio.Handshake = Handshake.None;
             // Matches DTR=H / RTS=H from the working direct CAT test.
@@ -98,15 +117,27 @@ namespace QO100CatProxyV5
 
         public void Run()
         {
-            Log("=== VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.00 started ===");
+            Log("=== VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.01 started ===");
             Log("Author HBØTR Stefan Franz | https://www.qrz.com/db/HB0TR");
-            Log("RADIO SETUP: IC-9700 must be in normal VFO mode; SATELLITE mode OFF; set USB-D manually.");
+            Log("RADIO INIT: native SATELLITE FULL-DUPLEX; QO-100 DL RF -> RX IF -> TX IF startup calculation; SAT ON; USB-D.");
+            Log("PTT MODE: native SAT PTT only (1C 00 01 / 1C 00 00); no XCHG.");
             Log(String.Format("CAT/Frequency: {0} | Hamlib/PTT: {1} | Radio: {2} | {3} baud | CI-V {4:X2}h",
                 ((IPEndPoint)listener.LocalEndpoint), ((IPEndPoint)hamListener.LocalEndpoint), radio.PortName, radio.BaudRate, civ));
+
             radio.Open();
+            Log("COM port to the IC-9700 is open.");
+
+            // Fail closed: VarAC CAT and Hamlib/PTT listeners are started only
+            // after the radio initialization has been acknowledged and verified.
+            if (!InitializeRadio())
+            {
+                Log("SAFETY STOP: radio initialization failed. CAT/PTT listeners were NOT started.");
+                throw new InvalidOperationException("IC-9700 startup initialization failed.");
+            }
+
             listener.Start();
             hamListener.Start();
-            Log("COM port to the IC-9700 is open.");
+            Log("RADIO READY: SATELLITE ON | D0/RX USB-D | D1/TX USB-D | native FULL-DUPLEX | D0 selected.");
             Log("Waiting for VarAC CAT and Hamlib/PTT connections ...");
 
             while (true)
@@ -152,6 +183,268 @@ namespace QO100CatProxyV5
                     if (hamClient != null && !IsSocketAlive(hamClient)) DisconnectHam("Hamlib/PTT connection closed.");
                 }
             }
+        }
+
+        private bool InitializeRadio()
+        {
+            Log("RADIO INIT START: native SATELLITE full-duplex");
+
+            // 1) Native SATELLITE mode must be ON.
+            int sat = ReadBinaryFunction(0x5A,"SATELLITE");
+            if (sat < 0) return false;
+            if (sat != 1)
+            {
+                if (!SendAckCommand(BuildCommand(new byte[]{0x16,0x5A,0x01}),900,
+                    "INIT SATELLITE ON (16 5A 01)")) return false;
+                Thread.Sleep(300);
+                sat = ReadBinaryFunction(0x5A,"SATELLITE");
+                if (sat != 1)
+                {
+                    Log("INIT ERROR: SATELLITE ON readback failed.");
+                    return false;
+                }
+            }
+            Log("INIT OK: SATELLITE = ON");
+
+            // Optional defined QO-100 start frequency.
+            if (startupSetFreq)
+            {
+                if (startupRxHz < rxMin || startupRxHz > rxMax)
+                {
+                    Log(String.Format("INIT SAFETY STOP: configured startup D0/RX {0} Hz outside RX window {1}..{2}.",
+                        startupRxHz,rxMin,rxMax));
+                    return false;
+                }
+
+                if (startupTxHz < txMin || startupTxHz > txMax)
+                {
+                    Log(String.Format("INIT SAFETY STOP: calculated startup D1/TX {0} Hz outside TX window {1}..{2}.",
+                        startupTxHz,txMin,txMax));
+                    return false;
+                }
+
+                Log(String.Format("INIT START FREQUENCIES: ON | D0/RX {0:F6} MHz | D1/TX {1:F6} MHz",
+                    startupRxHz/1000000.0,startupTxHz/1000000.0));
+            }
+            else
+            {
+                Log("INIT START FREQUENCIES: OFF | existing IC-9700 SAT frequencies will be retained.");
+            }
+
+            // 2) D0 = RX/downlink.
+            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),900,
+                "INIT select SAT D0/RX (07 D0)")) return false;
+            if (!SetSelectedUsbD("D0/RX","INIT D0")) return false;
+
+            if (startupSetFreq)
+            {
+                if (!SendAckCommand(BuildSetFreq05(startupRxHz),900,
+                    "INIT set D0/RX startup frequency (05)")) return false;
+                Thread.Sleep(200);
+            }
+
+            long d0Hz = ReadSelectedFrequencyInit("D0/RX");
+            if (d0Hz < rxMin || d0Hz > rxMax)
+            {
+                Log(String.Format("INIT SAFETY STOP: D0/RX {0} Hz outside RX window {1}..{2}.",
+                    d0Hz,rxMin,rxMax));
+                return false;
+            }
+            if (startupSetFreq && d0Hz != startupRxHz)
+            {
+                Log(String.Format("INIT ERROR: D0/RX startup readback mismatch. Wanted {0}, got {1} Hz.",
+                    startupRxHz,d0Hz));
+                return false;
+            }
+
+            lastRxHz = d0Hz;
+            Log(String.Format("INIT OK: D0/RX = {0:F6} MHz",d0Hz/1000000.0));
+
+            // 3) D1 = TX/uplink.
+            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD1}),900,
+                "INIT select SAT D1/TX (07 D1)")) return false;
+            if (!SetSelectedUsbD("D1/TX","INIT D1")) return false;
+
+            if (startupSetFreq)
+            {
+                if (!SendAckCommand(BuildSetFreq05(startupTxHz),900,
+                    "INIT set D1/TX startup frequency (05)")) return false;
+                Thread.Sleep(200);
+            }
+
+            long d1Hz = ReadSelectedFrequencyInit("D1/TX");
+            if (d1Hz < txMin || d1Hz > txMax)
+            {
+                Log(String.Format("INIT SAFETY STOP: D1/TX {0} Hz outside TX window {1}..{2}.",
+                    d1Hz,txMin,txMax));
+                return false;
+            }
+            if (startupSetFreq && d1Hz != startupTxHz)
+            {
+                Log(String.Format("INIT ERROR: D1/TX startup readback mismatch. Wanted {0}, got {1} Hz.",
+                    startupTxHz,d1Hz));
+                return false;
+            }
+
+            lastTxHz = d1Hz;
+            Log(String.Format("INIT OK: D1/TX = {0:F6} MHz",d1Hz/1000000.0));
+
+            // 4) Return to D0 and verify D0 did not move after the D1 write.
+            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),900,
+                "INIT select SAT D0/RX final (07 D0)")) return false;
+
+            long d0FinalHz = ReadSelectedFrequencyInit("D0/RX final");
+            if (d0FinalHz < rxMin || d0FinalHz > rxMax)
+            {
+                Log("INIT SAFETY STOP: final D0/RX readback outside RX window.");
+                return false;
+            }
+
+            if (startupSetFreq && d0FinalHz != startupRxHz)
+            {
+                Log(String.Format("INIT ERROR: D0/RX moved after D1 write. Wanted {0}, got {1} Hz.",
+                    startupRxHz,d0FinalHz));
+                return false;
+            }
+
+            lastRxHz = d0FinalHz;
+
+            if (ReadBinaryFunction(0x5A,"SATELLITE") != 1)
+            {
+                Log("INIT ERROR: final SATELLITE state is not ON.");
+                return false;
+            }
+
+            Log(String.Format(
+                "RADIO INIT COMPLETE: SATELLITE ON | D0/RX {0:F6} MHz USB-D | D1/TX {1:F6} MHz USB-D | D0 selected.",
+                lastRxHz/1000000.0,lastTxHz/1000000.0));
+            return true;
+        }
+
+        private long ReadSelectedFrequencyInit(string name)
+        {
+            byte[] response = SendInitQuery(
+                BuildCommand(new byte[]{0x03}),
+                0x03,-1,900,
+                "INIT READ " + name + " frequency (03)");
+
+            long hz=-1;
+            if (response == null || response.Length < 11 ||
+                !TryDecodeBcdFrequency(response,5,out hz))
+            {
+                Log("INIT ERROR: " + name + " frequency readback failed.");
+                return -1;
+            }
+
+            return hz;
+        }
+
+        private int ReadBinaryFunction(byte subCommand,string name)
+        {
+            byte[] response = SendInitQuery(
+                BuildCommand(new byte[]{0x16,subCommand}),
+                0x16,subCommand,900,
+                "INIT READ " + name + " (16 " + subCommand.ToString("X2",CultureInfo.InvariantCulture) + ")");
+
+            if (response == null || response.Length < 8)
+            {
+                Log("INIT ERROR: " + name + " readback missing.");
+                return -1;
+            }
+
+            byte value = response[6];
+            if (value != 0x00 && value != 0x01)
+            {
+                Log("INIT ERROR: " + name + " unexpected value " + value.ToString("X2",CultureInfo.InvariantCulture));
+                return -1;
+            }
+
+            Log("INIT READBACK: " + name + " = " + (value == 0x01 ? "ON" : "OFF"));
+            return value;
+        }
+
+        private bool SetSelectedUsbD(string vfoName,string step)
+        {
+            // Tested IC-9700 path:
+            // 06 01 01       -> USB, filter 1
+            // 1A 06 01 02    -> DATA ON, filter 2 (USB-D)
+            // Do not use 0x26 for startup mode setting.
+            if (!SendAckCommand(BuildCommand(new byte[]{0x06,0x01,0x01}),900,
+                step + "a " + vfoName + " -> USB/filter 1 (06 01 01)")) return false;
+
+            if (!SendAckCommand(BuildCommand(new byte[]{0x1A,0x06,0x01,0x02}),900,
+                step + "b " + vfoName + " -> DATA ON/filter 2 (1A 06 01 02)")) return false;
+
+            Thread.Sleep(250);
+
+            byte[] mode = SendInitQuery(
+                BuildCommand(new byte[]{0x04}),
+                0x04,-1,900,
+                step + "c " + vfoName + " base-mode readback (04)");
+
+            if (mode == null || mode.Length < 8 || mode[5] != 0x01 || mode[6] != 0x02)
+            {
+                Log("INIT ERROR: " + vfoName + " base-mode readback is not USB/filter 2.");
+                return false;
+            }
+
+            byte[] data = SendInitQuery(
+                BuildCommand(new byte[]{0x1A,0x06}),
+                0x1A,0x06,900,
+                step + "d " + vfoName + " DATA readback (1A 06)");
+
+            if (data == null || data.Length < 9 || data[6] != 0x01 || data[7] != 0x02)
+            {
+                Log("INIT ERROR: " + vfoName + " DATA readback is not ON/filter 2.");
+                return false;
+            }
+
+            Log("INIT OK: " + vfoName + " = USB-D");
+            return true;
+        }
+
+        private byte[] SendInitQuery(byte[] command,byte expectedCmd,int expectedSubCmd,
+                                     int timeoutMs,string label)
+        {
+            DrainRadioToApp();
+            Log(label + " | TX " + Hex(command));
+            radio.Write(command,0,command.Length);
+
+            Stopwatch sw=Stopwatch.StartNew();
+            List<byte> buf=new List<byte>();
+
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                ReadInto(radio,buf);
+                byte[] f;
+
+                while (TryExtractFrame(buf,out f))
+                {
+                    Log(label + " | RX " + Hex(f));
+
+                    // Ignore local CI-V echo.
+                    if (f.Length >= 6 && f[2] == civ && f[3] == 0xE0) continue;
+
+                    if (f.Length >= 6 && f[4] == 0xFA)
+                    {
+                        Log(label + " | NG (FA)");
+                        return null;
+                    }
+
+                    if (f.Length < 6 || f[4] != expectedCmd) continue;
+                    if (expectedSubCmd >= 0)
+                    {
+                        if (f.Length < 7 || f[5] != (byte)expectedSubCmd) continue;
+                    }
+
+                    return f;
+                }
+
+                Thread.Sleep(2);
+            }
+
+            Log(label + " | TIMEOUT after " + timeoutMs + " ms");
+            return null;
         }
 
         private static bool IsSocketAlive(TcpClient c)
@@ -277,21 +570,65 @@ namespace QO100CatProxyV5
         {
             if (on)
             {
-                Log("PTT ON: select SUB/TX and transmit.");
-                if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD1}),700,"PTT 1/2 select SUB/TX (07 D1)")) return false;
-                if (!SendAckCommand(BuildCommand(new byte[]{0x1C,0x00,0x01}),700,"PTT 2/2 TX ON (1C 00 01)")) return false;
+                if (pttState)
+                {
+                    Log("PTT ON requested while already transmitting -> no action.");
+                    return true;
+                }
+
+                // Native IC-9700 SATELLITE full-duplex was confirmed operational:
+                // D0 remains the 433 MHz downlink receiver while D1 transmits on 144 MHz.
+                // No D0/D1 selection and no XCHG are required for PTT.
+                if (lastTxHz < txMin || lastTxHz > txMax)
+                {
+                    Log(String.Format("PTT SAFETY STOP: cached D1/TX {0} Hz is outside TX window.",lastTxHz));
+                    return false;
+                }
+
+                Log(String.Format("PTT ON: native SAT full-duplex | D1/TX {0:F6} MHz | D0/RX remains active.",
+                    lastTxHz/1000000.0));
+
+                if (!SendAckCommand(BuildCommand(new byte[]{0x1C,0x00,0x01}),700,
+                    "PTT TX ON (1C 00 01)"))
+                {
+                    // Fail safe: explicitly request RX if TX ON was not cleanly acknowledged.
+                    SendAckCommand(BuildCommand(new byte[]{0x1C,0x00,0x00}),700,
+                        "PTT ROLLBACK TX OFF (1C 00 00)");
+                    pttState = false;
+                    return false;
+                }
+
                 pttState = true;
-                Log("PTT = TX");
+                Log("PTT = TX | native SAT full-duplex active.");
                 return true;
             }
             else
             {
-                Log("PTT OFF: return to receive and select MAIN/RX.");
-                bool a = SendAckCommand(BuildCommand(new byte[]{0x1C,0x00,0x00}),700,"PTT 1/2 TX OFF (1C 00 00)");
-                bool b = SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),700,"PTT 2/2 select MAIN/RX (07 D0)");
-                if (a) pttState = false;
-                if (a && b) Log("PTT = RX");
-                return a && b;
+                if (!pttState)
+                {
+                    // Duplicate OFF: still send the confirmed native SAT PTT OFF command.
+                    bool duplicateOff = SendAckCommand(BuildCommand(new byte[]{0x1C,0x00,0x00}),700,
+                        "PTT OFF duplicate (1C 00 00)");
+                    Log("PTT OFF requested while already receiving.");
+                    return duplicateOff;
+                }
+
+                Log("PTT OFF: native SAT full-duplex -> RX.");
+
+                bool ok = SendAckCommand(BuildCommand(new byte[]{0x1C,0x00,0x00}),700,
+                    "PTT TX OFF (1C 00 00)");
+
+                if (ok)
+                {
+                    pttState = false;
+                    Log("PTT = RX | D0/downlink remains the receive side.");
+                }
+                else
+                {
+                    Log("PTT OFF ERROR: radio did not acknowledge TX OFF.");
+                }
+
+                return ok;
             }
         }
 
@@ -308,7 +645,7 @@ namespace QO100CatProxyV5
 
         private void PumpRadioRaw()
         {
-      if (app == null) return;
+            if (app == null) return;
             int n = radio.BytesToRead;
             if (n <= 0) return;
             byte[] b = new byte[Math.Min(n,4096)];
@@ -334,16 +671,16 @@ namespace QO100CatProxyV5
                 HandleSetFrequency(f,hz); return;
             }
 
-            // During direct CAT testing, ModeUSB_D caused unintended TX behavior.
-            // The supported station setup keeps the IC-9700 in normal VFO mode with SATELLITE mode OFF.
-            // Therefore, mode commands are acknowledged to VarAC by default but are NOT sent to the radio.
+            // V5.01 initializes D0/RX and D1/TX to USB-D using the tested 06 + 1A 06 path.
+            // VarAC 0x26 mode commands remain acknowledged locally and are NOT sent to the radio.
+            // 0x26 is deliberately avoided in IC-9700 SATELLITE mode.
             if (ignoreMode && cmd == 0x26)
             {
                 Log("VarAC mode command 26 intercepted (radio mode remains unchanged).");
                 ReplyAck(f,true); return;
             }
 
-            // Frequency readback: return RX/MAIN.
+            // Frequency readback: return SAT D0/RX.
             if (cmd == 0x25 && f.Length == 7 && f[5] == 0x00)
             {
                 long hz = QueryRxFrequency();
@@ -357,7 +694,7 @@ namespace QO100CatProxyV5
                 return;
             }
 
-            // Forward PTT 1C 00 01/00 and other commands unchanged.
+            // Direct CAT PTT 1C 00 01/00 is native SAT-safe; Hamlib/PTT is the primary configured path.
             Forward(f);
         }
 
@@ -378,7 +715,7 @@ namespace QO100CatProxyV5
             if (ok)
             {
                 lastRxHz = rxHz;
-                Log(String.Format("FREQ: RX/MAIN {0:F6} MHz | TX/SUB {1:F6} MHz",
+                Log(String.Format("FREQ: SAT D0/RX {0:F6} MHz | SAT D1/TX {1:F6} MHz",
                     rxHz/1000000.0, txHz/1000000.0));
             }
             else Log("ERROR while setting RX/TX.");
@@ -387,24 +724,38 @@ namespace QO100CatProxyV5
 
         private bool SetBothFrequencies(long rxHz,long txHz)
         {
-            // Supported IC-9700 setup: normal VFO mode, SATELLITE mode OFF.
-            // MAIN = 433 MHz RX/downlink IF, SUB = 144 MHz TX/uplink IF.
-            // Therefore set MAIN to RX first, then SUB to TX, and finally select MAIN again.
-            Log(String.Format("SET START: RX/MAIN {0:F6} MHz | TX/SUB {1:F6} MHz",
+            // Confirmed native IC-9700 SATELLITE mapping:
+            //   D0 = 433 MHz RX/downlink IF
+            //   D1 = 144 MHz TX/uplink IF
+            // Command 05 sets each selected SAT side independently; the other side did not track.
+            Log(String.Format("SAT SET START: D0/RX {0:F6} MHz | D1/TX {1:F6} MHz",
                 rxHz/1000000.0, txHz/1000000.0));
 
-            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),700,"1/5 select MAIN (07 D0)")) return false;
-            if (!SendAckCommand(BuildSetFreq05(rxHz),700,"2/5 set RX frequency on MAIN (05)")) return false;
-            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD1}),700,"3/5 select SUB (07 D1)")) return false;
-            if (!SendAckCommand(BuildSetFreq05(txHz),700,"4/5 set TX frequency on SUB (05)")) return false;
-            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),700,"5/5 select MAIN again (07 D0)")) return false;
-            Log("SET OK: IC-9700 acknowledged RX/MAIN and TX/SUB with FB.");
+            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),700,
+                "SAT QSY 1/5 select D0/RX (07 D0)")) return false;
+
+            if (!SendAckCommand(BuildSetFreq05(rxHz),700,
+                "SAT QSY 2/5 set D0/RX frequency (05)")) return false;
+
+            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD1}),700,
+                "SAT QSY 3/5 select D1/TX (07 D1)")) return false;
+
+            if (!SendAckCommand(BuildSetFreq05(txHz),700,
+                "SAT QSY 4/5 set D1/TX frequency (05)")) return false;
+
+            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),700,
+                "SAT QSY 5/5 select D0/RX again (07 D0)")) return false;
+
+            lastRxHz = rxHz;
+            lastTxHz = txHz;
+
+            Log("SAT SET OK: D0/RX and D1/TX acknowledged with FB; D0/RX selected.");
             return true;
         }
 
         private long QueryRxFrequency()
         {
-            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),700,"RX read: select MAIN")) return lastRxHz;
+            if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),700,"RX read: select SAT D0/RX")) return lastRxHz;
             byte[] response = SendQuery(BuildCommand(new byte[]{0x03}),0x03,900);
             long hz=-1;
             if (response != null && response.Length >= 11) TryDecodeBcdFrequency(response,5,out hz);
@@ -599,17 +950,26 @@ namespace QO100CatProxyV5
 Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies 'System.dll'
 
 Write-Host ''
-Write-Host 'VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.00' -ForegroundColor Cyan
+Write-Host 'VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.01' -ForegroundColor Cyan
 Write-Host 'Author HBØTR Stefan Franz | https://www.qrz.com/db/HB0TR'
 Write-Host ('CAT/Frequency: {0}:{1}   Hamlib/PTT: {2}:{3}' -f $listenHost,$listenPort,$hamHost,$hamPort)
 Write-Host ('Radio: {0}   Baud: {1}' -f $radioPort,$baud)
 Write-Host ('RX/TX offset: {0} Hz' -f $rxTxDelta)
+Write-Host ('Startup frequencies: {0}' -f $(if ($startupSetFreq) {'ON'} else {'OFF'}))
+if ($startupSetFreq) {
+    Write-Host ('  QO-100 DL RF:   {0:F6} MHz' -f ($qo100DlRfHz/1000000.0))
+    Write-Host ('  RX converter LO:{0:F6} MHz' -f ($rxConverterLoHz/1000000.0))
+    Write-Host ('  D0/RX IF:       {0:F6} MHz' -f ($startupRxHz/1000000.0))
+    Write-Host ('  D1/TX IF:       {0:F6} MHz' -f ($startupTxHz/1000000.0))
+}
 Write-Host ''
-Write-Host 'IMPORTANT: Frequency control stays on CAT/TCP 9701. PTT uses separate Hamlib port 4532. Keep TX power minimal for the first test.' -ForegroundColor Yellow
+Write-Host 'V5.01 native SAT full-duplex: QO100_DL_RF_HZ defines the startup downlink RF; D0/RX and D1/TX IFs are derived automatically.' -ForegroundColor Yellow
 Write-Host ''
 
-$proxy = New-Object -TypeName QO100CatProxyV5.Proxy -ArgumentList @(
+$proxy = New-Object -TypeName QO100CatProxyV501.Proxy -ArgumentList @(
     $listenHost,$listenPort,$hamHost,$hamPort,$radioPort,$baud,$civAddr,
-    $rxTxDelta,$rxMin,$rxMax,$txMin,$txMax,$ignoreMode,$logPath
+    $rxTxDelta,$rxMin,$rxMax,$txMin,$txMax,
+    $startupSetFreq,$startupRxHz,$startupTxHz,
+    $ignoreMode,$logPath
 )
 try { $proxy.Run() } finally { $proxy.Dispose() }
