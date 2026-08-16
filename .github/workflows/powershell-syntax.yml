@@ -18,15 +18,25 @@ jobs:
       - name: Parse PowerShell source without executing it
         shell: powershell
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path '.\VarAC_QSY-CAT_Proxy_IC-9700_HB0TR.ps1'),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | Format-List | Out-String | Write-Error
+          $failed = $false
+          Get-ChildItem -Path . -Filter '*.ps1' -Recurse | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+
+            if ($errors.Count -gt 0) {
+              Write-Host "Syntax errors in $($_.FullName)"
+              $errors | Format-List | Out-String | Write-Error
+              $failed = $true
+            } else {
+              Write-Host "PowerShell syntax OK: $($_.FullName)"
+            }
+          }
+
+          if ($failed) {
             exit 1
           }
-          Write-Host 'PowerShell syntax OK.'
