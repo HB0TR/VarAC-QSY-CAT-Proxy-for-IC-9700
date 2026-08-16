@@ -3,12 +3,60 @@
 ## Proxy says the COM port does not exist or is busy
 
 - Check `RADIO_PORT` in `proxy_config.ini`.
-- Close RS-BA1, OmniRig, WSJT-X, logging software, or any other program that may have opened the IC-9700 COM port.
-- Confirm the IC-9700 USB connection is present in Windows Device Manager.
+- Close RS-BA1, OmniRig, WSJT-X, logging software, test scripts, or any other program using the IC-9700 COM port.
+- Confirm the IC-9700 USB connection in Windows Device Manager.
+
+## Startup stops before port 9701 / 4532 opens
+
+V5.01 intentionally fails closed. Check `QSY-CAT_Proxy.log`.
+
+Typical causes:
+
+- SATELLITE mode could not be enabled or read back.
+- D0 or D1 USB-D readback failed.
+- D0/RX is outside `RX_IF_MIN_HZ .. RX_IF_MAX_HZ`.
+- D1/TX is outside `TX_IF_MIN_HZ .. TX_IF_MAX_HZ`.
+- A configured startup frequency did not read back exactly.
+
+## Wrong startup frequency
+
+Check:
+
+```ini
+STARTUP_SET_FREQUENCIES=1
+QO100_DL_RF_HZ=10489595000
+RX_CONVERTER_LO_HZ=10056000000
+RX_TX_DELTA_HZ=289500000
+```
+
+The defaults calculate:
+
+```text
+10,489.595 MHz - 10,056.000 MHz = 433.595 MHz D0/RX
+433.595 MHz - 289.500 MHz       = 144.095 MHz D1/TX
+```
+
+Run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\Test_QO100_Startup_Frequency_Config_HB0TR.ps1
+```
+
+This helper does not open the radio.
+
+## I do not want the proxy to change frequencies at startup
+
+Set:
+
+```ini
+STARTUP_SET_FREQUENCIES=0
+```
+
+The existing SAT frequencies are retained, but the safety windows and USB-D initialization still apply.
 
 ## VarAC frequency changes do nothing
 
-Check the VarAC frequency-control path:
+Check VarAC:
 
 ```text
 Frequency control: CAT / Icom IC-9700
@@ -19,22 +67,22 @@ Mode:              USB-D
 Diff Hz:            -10056000000
 ```
 
-Then check the proxy log for `VarAC CAT connected.` and for the five `SET` steps.
+The log should show all five SAT QSY steps.
 
-## RX changes but TX does not
+## D0/RX changes but D1/TX does not
 
-V5.00 is specifically intended to set both sides. The log should contain:
+Expected QSY log:
 
 ```text
-2/5 set RX frequency on MAIN (05) ... OK (FB)
-4/5 set TX frequency on SUB (05) ... OK (FB)
+SAT QSY 2/5 set D0/RX frequency (05) ... OK (FB)
+SAT QSY 4/5 set D1/TX frequency (05) ... OK (FB)
 ```
 
-If step 4 fails, verify that the IC-9700 is in **normal VFO mode with SATELLITE mode OFF** and that the 144 MHz SUB side is available.
+Confirm the radio is in native SATELLITE mode and check CI-V responses for `FA` or timeout.
 
-## Frequency control works but PTT does not
+## PTT does not work
 
-Check the VarAC PTT path:
+Check VarAC:
 
 ```text
 PTT configuration: Hamlib
@@ -42,13 +90,26 @@ Host:              localhost
 Port:              4532
 ```
 
-The proxy should log `VarAC Hamlib/PTT connected.` followed by `HAMLIB RX: T 1` or `HAMLIB RX: T 0`.
+Expected log:
 
-## PTT works but QSY does not
+```text
+HAMLIB RX: T 1
+PTT TX ON (1C 00 01) ... OK (FB)
+```
 
-PTT and frequency control use separate local TCP ports. Confirm that VarAC CAT is connected to **9701**, not 4532.
+PTT in V5.01 does not switch D0/D1 and does not use XCHG.
 
-## Radio unexpectedly switches mode or transmits during QSY
+## I cannot hear the downlink during TX
+
+V5.01 is designed around native IC-9700 SAT full duplex. Verify:
+
+- SATELLITE mode is ON;
+- D0 is the 433 MHz downlink/RX side;
+- D1 is the 144 MHz uplink/TX side;
+- both sides are USB-D;
+- the converter chain and audio routing allow the 433 MHz downlink receiver to remain audible.
+
+## Radio unexpectedly changes mode
 
 Keep:
 
@@ -56,51 +117,37 @@ Keep:
 IGNORE_VARAC_MODE_COMMANDS=1
 ```
 
-Keep the IC-9700 in **VFO mode with SATELLITE mode OFF** and set USB-D manually before starting operation. Do not change this option until the behavior has been tested safely with your station.
+V5.01 initializes USB-D itself. VarAC command `0x26` is acknowledged locally by default rather than being forwarded to the radio.
 
-## Wrong QO-100 frequency
+## Wrong QO-100 frequency in VarAC
 
-For the tested Kuhne RX chain:
-
-```text
-QO-100 downlink RF 10,489.595 MHz
-- LNC LO          10,056.000 MHz
-= IC-9700 RX IF      433.595 MHz
-```
-
-VarAC therefore uses:
+The tested VarAC setting is:
 
 ```text
 Diff Hz = -10056000000
 ```
 
-For TX, V5.00 derives:
+This converts downlink RF to the 433 MHz RX IF used by CAT.
 
-```text
-433.595 MHz - 289.500 MHz = 144.095 MHz
-```
-
-The Kuhne 144 MHz IF upconverter then produces the corresponding 2.4 GHz uplink frequency.
+`QO100_DL_RF_HZ` is the proxy's startup tuning value; it does not replace the VarAC `Diff Hz` setting.
 
 ## Port 9701 or 4532 is already in use
 
-Change the appropriate port in `proxy_config.ini` and use the same value in VarAC. Keep both endpoints on loopback (`127.0.0.1`) unless you deliberately understand and secure remote access.
+Change the appropriate port in `proxy_config.ini` and use the same port in VarAC. Keep the listener on `127.0.0.1` unless remote access is deliberately required and secured.
 
 ## Log file
 
-The log is written to:
+Default:
 
 ```text
 QSY-CAT_Proxy.log
 ```
 
-When reporting a bug, include:
+When reporting a problem, include:
 
 - proxy version;
 - relevant log excerpt;
-- `proxy_config.ini` with any private/local details removed if desired;
+- sanitized `proxy_config.ini`;
 - IC-9700 firmware version;
 - VarAC version;
-- whether the problem is CAT/QSY, PTT, or both.
-
-Do not post unrelated personal data or credentials.
+- whether the issue is startup, CAT/QSY, PTT, or full-duplex receive.
