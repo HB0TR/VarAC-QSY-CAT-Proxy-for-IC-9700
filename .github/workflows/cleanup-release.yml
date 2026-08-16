@@ -1,0 +1,31 @@
+name: Cleanup release helper
+
+on:
+  push:
+    paths:
+      - ".github/workflows/cleanup-release.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove accidental v5.00 branch but keep the v5.00 tag
+        shell: bash
+        run: |
+          git push origin :refs/heads/v5.00 || true
+
+      - name: Remove one-time publishing helpers from main
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/publish-v5.yml .github/workflows/cleanup-release.yml
+          git commit -m "Clean up V5.00 publishing helpers"
+          git push origin HEAD:main
