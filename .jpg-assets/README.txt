@@ -1,0 +1,1 @@
+Temporary base64 chunks for replacing documentation screenshots with the user-provided JPG files.
