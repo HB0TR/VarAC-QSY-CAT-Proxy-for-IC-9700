@@ -8,15 +8,32 @@
 
 ## Startup stops before port 9701 / 4532 opens
 
-V5.01 intentionally fails closed. Check `QSY-CAT_Proxy.log`.
+V5.02 intentionally fails closed. Check `QSY-CAT_Proxy.log`.
 
 Typical causes:
 
 - SATELLITE mode could not be enabled or read back.
+- The startup D0/D1 band-map probe did not find one 70 cm side and one 2 m side.
+- A required `07 B0` MAIN/SUB exchange was not acknowledged or did not produce D0 = 70 cm / D1 = 2 m.
 - D0 or D1 USB-D readback failed.
 - D0/RX is outside `RX_IF_MIN_HZ .. RX_IF_MAX_HZ`.
 - D1/TX is outside `TX_IF_MIN_HZ .. TX_IF_MAX_HZ`.
 - A configured startup frequency did not read back exactly.
+
+## Startup shows reversed D0/D1 bands
+
+V5.02 checks the SAT band assignment before writing modes or frequencies.
+
+A reversed startup state is expected to look like:
+
+```text
+INIT BAND MAP PROBE: D0/MAIN 144.xxx MHz | D1/SUB 433.xxx MHz
+INIT BAND MAP: reversed assignment detected (D0=2 m, D1=70 cm). Exchanging MAIN/SUB with 07 B0.
+INIT BAND MAP AFTER EXCHANGE: D0/MAIN 433.xxx MHz | D1/SUB 144.xxx MHz
+INIT BAND MAP OK: MAIN/SUB exchanged; D0/MAIN is now 70 cm RX and D1/SUB is 2 m TX.
+```
+
+If the post-exchange readback still does not show 70 cm on D0 and 2 m on D1, the proxy stops before opening CAT/PTT.
 
 ## Wrong startup frequency
 
@@ -97,11 +114,11 @@ HAMLIB RX: T 1
 PTT TX ON (1C 00 01) ... OK (FB)
 ```
 
-PTT in V5.01 does not switch D0/D1 and does not use XCHG.
+PTT in V5.02 does not switch D0/D1 and does not use XCHG. `07 B0` is used only during startup if the SAT band assignment is reversed.
 
 ## I cannot hear the downlink during TX
 
-V5.01 is designed around native IC-9700 SAT full duplex. Verify:
+V5.02 is designed around native IC-9700 SAT full duplex. Verify:
 
 - SATELLITE mode is ON;
 - D0 is the 433 MHz downlink/RX side;
@@ -117,7 +134,7 @@ Keep:
 IGNORE_VARAC_MODE_COMMANDS=1
 ```
 
-V5.01 initializes USB-D itself. VarAC command `0x26` is acknowledged locally by default rather than being forwarded to the radio.
+V5.02 initializes USB-D itself. VarAC command `0x26` is acknowledged locally by default rather than being forwarded to the radio.
 
 ## Wrong QO-100 frequency in VarAC
 
