@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite the project and author."
 title: "VarAC QSY-CAT Proxy for IC-9700"
-version: "5.01"
-date-released: 2026-08-16
+version: "5.02"
+date-released: 2026-09-20
 authors:
   - family-names: "Franz"
     given-names: "Stefan"
