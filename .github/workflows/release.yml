@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - CITATION.cff
+      - .github/workflows/release.yml
 
 permissions:
   contents: write
@@ -23,7 +24,125 @@ jobs:
         shell: pwsh
         run: |
           $cff = Get-Content -LiteralPath "CITATION.cff" -Raw
-          if ($cff -notmatch 'version:\s*"?([0-9]+\.[0-9]+)"?') {
+          if ($cff -notmatch '(?m)^version:\s*"?([0-9]+\.[0-9]+)"?\s*
+            throw "Could not read version from CITATION.cff"
+          }
+          $version = $Matches[1]
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Validate PowerShell source and version markers
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "VarAC_QSY-CAT_Proxy_IC-9700_HB0TR.ps1"),
+            [ref]$null,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw "PowerShell parser validation failed."
+          }
+
+          $script = Get-Content "VarAC_QSY-CAT_Proxy_IC-9700_HB0TR.ps1" -Raw
+          $readme = Get-Content "README.md" -Raw
+          if ($script -notmatch [regex]::Escape("V$version")) {
+            throw "Main script does not contain V$version."
+          }
+          if ($readme -notmatch [regex]::Escape("V$version")) {
+            throw "README does not contain V$version."
+          }
+
+      - name: Build release package
+        id: build
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $archive = "VarAC_QSY-CAT_Proxy_IC-9700_HB0TR_V$version.zip"
+          $stage = Join-Path $env:RUNNER_TEMP "release-stage"
+          Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stage | Out-Null
+
+          $rootFiles = @(
+            "VarAC_QSY-CAT_Proxy_IC-9700_HB0TR.ps1",
+            "Start_VarAC_QSY-CAT_Proxy.bat",
+            "proxy_config.ini",
+            "README.md",
+            "CHANGELOG.md",
+            "CITATION.cff",
+            "LICENSE",
+            "NOTICE",
+            "SECURITY.md",
+            "CONTRIBUTING.md"
+          )
+
+          foreach ($file in $rootFiles) {
+            Copy-Item -LiteralPath $file -Destination $stage
+          }
+          Copy-Item -LiteralPath "docs" -Destination (Join-Path $stage "docs") -Recurse
+          Copy-Item -LiteralPath "tools" -Destination (Join-Path $stage "tools") -Recurse
+
+          Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $archive -CompressionLevel Optimal
+
+          $zipHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $scriptHash = (Get-FileHash -LiteralPath "VarAC_QSY-CAT_Proxy_IC-9700_HB0TR.ps1" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $configHash = (Get-FileHash -LiteralPath "proxy_config.ini" -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          @(
+            "$zipHash  $archive",
+            "$scriptHash  VarAC_QSY-CAT_Proxy_IC-9700_HB0TR.ps1",
+            "$configHash  proxy_config.ini"
+          ) | Set-Content -LiteralPath "SHA256SUMS.txt" -Encoding ascii
+
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+
+      - name: Prepare release notes
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $changelog = Get-Content -LiteralPath "CHANGELOG.md" -Raw
+          $escaped = [regex]::Escape($version)
+          $match = [regex]::Match(
+            $changelog,
+            "(?ms)^## V$escaped\s+-\s+.*?(?=^## V|\z)"
+          )
+
+          $section = if ($match.Success) {
+            $match.Value.Trim()
+          } else {
+            "See CHANGELOG.md for the V$version changes."
+          }
+
+          @"
+          # VarAC QSY-CAT Proxy for IC-9700 by HBØTR V$version
+
+          $section
+
+          **Author:** HBØTR Stefan Franz | https://www.qrz.com/db/HB0TR
+
+          Please read the README and safety notes before the first transmit test.
+          "@ | Set-Content -LiteralPath "RELEASE_NOTES.md" -Encoding utf8
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $version = "${{ steps.version.outputs.version }}"
+          $archive = "${{ steps.build.outputs.archive }}"
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; nothing to publish."
+            exit 0
+          }
+
+          gh release create $tag $archive SHA256SUMS.txt --target "$env:GITHUB_SHA" --title "VarAC QSY-CAT Proxy for IC-9700 by HBØTR V$version" --notes-file "RELEASE_NOTES.md"
+) {
             throw "Could not read version from CITATION.cff"
           }
           $version = $Matches[1]
