@@ -1,4 +1,4 @@
-﻿# VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.01
+# VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.02 SAT AUTO BAND-MAP
 # Author: HBØTR Stefan Franz | https://www.qrz.com/db/HB0TR
 # Copyright (c) 2026 Stefan Franz, HBØTR
 # SPDX-License-Identifier: MIT
@@ -68,7 +68,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 
-namespace QO100CatProxyV501
+namespace QO100CatProxyV502
 {
     public sealed class Proxy : IDisposable
     {
@@ -117,9 +117,9 @@ namespace QO100CatProxyV501
 
         public void Run()
         {
-            Log("=== VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.01 started ===");
+            Log("=== VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.02 SAT AUTO BAND-MAP started ===");
             Log("Author HBØTR Stefan Franz | https://www.qrz.com/db/HB0TR");
-            Log("RADIO INIT: native SATELLITE FULL-DUPLEX; QO-100 DL RF -> RX IF -> TX IF startup calculation; SAT ON; USB-D.");
+            Log("RADIO INIT: native SATELLITE FULL-DUPLEX; auto-detect D0/D1 band mapping; exchange MAIN/SUB if reversed; QO-100 startup frequencies; USB-D.");
             Log("PTT MODE: native SAT PTT only (1C 00 01 / 1C 00 00); no XCHG.");
             Log(String.Format("CAT/Frequency: {0} | Hamlib/PTT: {1} | Radio: {2} | {3} baud | CI-V {4:X2}h",
                 ((IPEndPoint)listener.LocalEndpoint), ((IPEndPoint)hamListener.LocalEndpoint), radio.PortName, radio.BaudRate, civ));
@@ -206,6 +206,12 @@ namespace QO100CatProxyV501
             }
             Log("INIT OK: SATELLITE = ON");
 
+            // 2) Before changing mode or frequency, verify which physical band is on
+            //    SAT D0/MAIN and SAT D1/SUB. The IC-9700 can enter SAT mode with
+            //    MAIN/SUB reversed relative to the proxy's QO-100 mapping.
+            //    V5.02 detects that state and exchanges MAIN/SUB once with 07 B0.
+            if (!EnsureSatBandMapping()) return false;
+
             // Optional defined QO-100 start frequency.
             if (startupSetFreq)
             {
@@ -231,7 +237,7 @@ namespace QO100CatProxyV501
                 Log("INIT START FREQUENCIES: OFF | existing IC-9700 SAT frequencies will be retained.");
             }
 
-            // 2) D0 = RX/downlink.
+            // 3) D0 = RX/downlink.
             if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),900,
                 "INIT select SAT D0/RX (07 D0)")) return false;
             if (!SetSelectedUsbD("D0/RX","INIT D0")) return false;
@@ -260,7 +266,7 @@ namespace QO100CatProxyV501
             lastRxHz = d0Hz;
             Log(String.Format("INIT OK: D0/RX = {0:F6} MHz",d0Hz/1000000.0));
 
-            // 3) D1 = TX/uplink.
+            // 4) D1 = TX/uplink.
             if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD1}),900,
                 "INIT select SAT D1/TX (07 D1)")) return false;
             if (!SetSelectedUsbD("D1/TX","INIT D1")) return false;
@@ -289,7 +295,7 @@ namespace QO100CatProxyV501
             lastTxHz = d1Hz;
             Log(String.Format("INIT OK: D1/TX = {0:F6} MHz",d1Hz/1000000.0));
 
-            // 4) Return to D0 and verify D0 did not move after the D1 write.
+            // 5) Return to D0 and verify D0 did not move after the D1 write.
             if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),900,
                 "INIT select SAT D0/RX final (07 D0)")) return false;
 
@@ -337,6 +343,88 @@ namespace QO100CatProxyV501
             }
 
             return hz;
+        }
+
+        private bool EnsureSatBandMapping()
+        {
+            Log("INIT BAND MAP CHECK: probing SAT D0/MAIN and D1/SUB before any mode/frequency write.");
+
+            long d0Hz = ReadSatSideFrequency(0xD0,"D0/MAIN probe");
+            if (d0Hz <= 0) return false;
+
+            long d1Hz = ReadSatSideFrequency(0xD1,"D1/SUB probe");
+            if (d1Hz <= 0) return false;
+
+            Log(String.Format("INIT BAND MAP PROBE: D0/MAIN {0:F6} MHz | D1/SUB {1:F6} MHz",
+                d0Hz/1000000.0,d1Hz/1000000.0));
+
+            if (Is70cmBandFamily(d0Hz) && Is2mBandFamily(d1Hz))
+            {
+                if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),900,
+                    "INIT BAND MAP select D0/RX final (07 D0)")) return false;
+
+                Log("INIT BAND MAP OK: D0/MAIN is 70 cm RX and D1/SUB is 2 m TX; no exchange required.");
+                return true;
+            }
+
+            if (Is2mBandFamily(d0Hz) && Is70cmBandFamily(d1Hz))
+            {
+                Log("INIT BAND MAP: reversed assignment detected (D0=2 m, D1=70 cm). Exchanging MAIN/SUB with 07 B0.");
+
+                if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xB0}),900,
+                    "INIT BAND MAP exchange MAIN/SUB (07 B0)")) return false;
+
+                Thread.Sleep(300);
+
+                long d0AfterHz = ReadSatSideFrequency(0xD0,"D0/MAIN after exchange");
+                if (d0AfterHz <= 0) return false;
+
+                long d1AfterHz = ReadSatSideFrequency(0xD1,"D1/SUB after exchange");
+                if (d1AfterHz <= 0) return false;
+
+                Log(String.Format("INIT BAND MAP AFTER EXCHANGE: D0/MAIN {0:F6} MHz | D1/SUB {1:F6} MHz",
+                    d0AfterHz/1000000.0,d1AfterHz/1000000.0));
+
+                if (!Is70cmBandFamily(d0AfterHz) || !Is2mBandFamily(d1AfterHz))
+                {
+                    Log("INIT SAFETY STOP: MAIN/SUB exchange did not produce D0=70 cm and D1=2 m.");
+                    return false;
+                }
+
+                if (!SendAckCommand(BuildCommand(new byte[]{0x07,0xD0}),900,
+                    "INIT BAND MAP select D0/RX after exchange (07 D0)")) return false;
+
+                Log("INIT BAND MAP OK: MAIN/SUB exchanged; D0/MAIN is now 70 cm RX and D1/SUB is 2 m TX.");
+                return true;
+            }
+
+            Log(String.Format(
+                "INIT SAFETY STOP: cannot identify expected SAT band pair. D0={0:F6} MHz, D1={1:F6} MHz; expected one 70 cm side and one 2 m side.",
+                d0Hz/1000000.0,d1Hz/1000000.0));
+            return false;
+        }
+
+        private long ReadSatSideFrequency(byte selector,string name)
+        {
+            string selectorHex = selector.ToString("X2",CultureInfo.InvariantCulture);
+            if (!SendAckCommand(BuildCommand(new byte[]{0x07,selector}),900,
+                "INIT BAND MAP select " + name + " (07 " + selectorHex + ")")) return -1;
+
+            return ReadSelectedFrequencyInit(name);
+        }
+
+        private static bool Is2mBandFamily(long hz)
+        {
+            // Deliberately broader than the configured TX safety window: this is only
+            // used to identify which IC-9700 SAT side contains the 2 m band.
+            return hz >= 140000000L && hz < 150000000L;
+        }
+
+        private static bool Is70cmBandFamily(long hz)
+        {
+            // Deliberately broader than the configured RX safety window: this is only
+            // used to identify which IC-9700 SAT side contains the 70 cm band.
+            return hz >= 400000000L && hz < 500000000L;
         }
 
         private int ReadBinaryFunction(byte subCommand,string name)
@@ -671,7 +759,7 @@ namespace QO100CatProxyV501
                 HandleSetFrequency(f,hz); return;
             }
 
-            // V5.01 initializes D0/RX and D1/TX to USB-D using the tested 06 + 1A 06 path.
+            // V5.02 SAT auto band-map initializes D0/RX and D1/TX to USB-D using the tested 06 + 1A 06 path.
             // VarAC 0x26 mode commands remain acknowledged locally and are NOT sent to the radio.
             // 0x26 is deliberately avoided in IC-9700 SATELLITE mode.
             if (ignoreMode && cmd == 0x26)
@@ -910,7 +998,6 @@ namespace QO100CatProxyV501
 
         private static bool IsCiv(byte[] f)
         { return f!=null && f.Length>=6 && f[0]==0xFE && f[1]==0xFE && f[f.Length-1]==0xFD; }
-
         private static bool TryExtractFrame(List<byte> buffer,out byte[] frame)
         {
             frame=null; if (buffer.Count<3) return false;
@@ -950,7 +1037,7 @@ namespace QO100CatProxyV501
 Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies 'System.dll'
 
 Write-Host ''
-Write-Host 'VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.01' -ForegroundColor Cyan
+Write-Host 'VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.02 SAT AUTO BAND-MAP' -ForegroundColor Cyan
 Write-Host 'Author HBØTR Stefan Franz | https://www.qrz.com/db/HB0TR'
 Write-Host ('CAT/Frequency: {0}:{1}   Hamlib/PTT: {2}:{3}' -f $listenHost,$listenPort,$hamHost,$hamPort)
 Write-Host ('Radio: {0}   Baud: {1}' -f $radioPort,$baud)
@@ -963,10 +1050,10 @@ if ($startupSetFreq) {
     Write-Host ('  D1/TX IF:       {0:F6} MHz' -f ($startupTxHz/1000000.0))
 }
 Write-Host ''
-Write-Host 'V5.01 native SAT full-duplex: QO100_DL_RF_HZ defines the startup downlink RF; D0/RX and D1/TX IFs are derived automatically.' -ForegroundColor Yellow
+Write-Host 'V5.02 SAT AUTO BAND-MAP: D0/D1 are probed before initialization; if D0=2 m and D1=70 cm, MAIN/SUB are exchanged with CI-V 07 B0. Startup IFs are then applied as before.' -ForegroundColor Yellow
 Write-Host ''
 
-$proxy = New-Object -TypeName QO100CatProxyV501.Proxy -ArgumentList @(
+$proxy = New-Object -TypeName QO100CatProxyV502.Proxy -ArgumentList @(
     $listenHost,$listenPort,$hamHost,$hamPort,$radioPort,$baud,$civAddr,
     $rxTxDelta,$rxMin,$rxMax,$txMin,$txMax,
     $startupSetFreq,$startupRxHz,$startupTxHz,
