@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## V5.02 - 2026-09-20
+
+### Added
+- Automatic SAT D0/D1 band-map probe before any startup mode or frequency writes.
+- Automatic CI-V `07 B0` MAIN/SUB exchange when startup detects D0 on 2 m and D1 on 70 cm.
+- Post-exchange D0/D1 frequency readback and verification before initialization continues.
+- Reproducible GitHub release workflow that builds the Windows ZIP and `SHA256SUMS.txt` from the tagged source.
+
+### Changed
+- Startup no longer assumes that native SATELLITE mode always enters with 70 cm on D0 and 2 m on D1.
+- Fail-closed initialization now rejects an unrecognized SAT band pair before USB-D or startup frequencies are written.
+- The V5.01 native SATELLITE/full-duplex QSY and PTT model remains unchanged after the band mapping has been normalized.
+
+### Station validation
+- Confirmed on the HBØTR IC-9700 with the previously failing startup state D0/MAIN = 144 MHz and D1/SUB = 433 MHz.
+- V5.02 detected the reversed assignment, exchanged MAIN/SUB with `07 B0`, verified D0 = 70 cm / D1 = 2 m, and then completed the normal USB-D and 433.595 / 144.095 MHz startup sequence.
+- CAT/QSY and native SAT full-duplex PTT remained operational after the corrected initialization.
+
 ## V5.01 - 2026-08-16
 
 ### Changed
