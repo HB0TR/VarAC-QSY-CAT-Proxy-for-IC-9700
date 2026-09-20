@@ -7,7 +7,7 @@ VarAC presents one receive/downlink frequency to CAT. In the HBØTR QO-100 stati
 - SAT `D0`: 433 MHz downlink / RX IF
 - SAT `D1`: 144 MHz uplink / TX IF
 
-V5.01 uses the IC-9700's native **SATELLITE mode**.
+V5.02 uses the IC-9700's native **SATELLITE mode** and normalizes the SAT band assignment before any mode or frequency write.
 
 ## Interfaces
 
@@ -31,24 +31,26 @@ The proxy recognizes the Icom CI-V frequency-set forms used by VarAC (`25 00` an
 
 ## Startup sequence
 
-V5.01 opens the physical radio first and does not open CAT/PTT listeners until initialization succeeds.
+V5.02 opens the physical radio first and does not open CAT/PTT listeners until initialization succeeds.
 
 1. Read SATELLITE status: `16 5A`.
 2. If needed, enable SATELLITE: `16 5A 01`; verify readback.
-3. Select D0/RX: `07 D0`.
-4. Set D0/RX USB-D:
+3. Probe D0/MAIN with `07 D0` + `03` and D1/SUB with `07 D1` + `03`.
+4. If D0 is 70 cm and D1 is 2 m, continue. If reversed, exchange MAIN/SUB once with `07 B0`, then read both sides again and require D0 = 70 cm / D1 = 2 m.
+5. Select D0/RX: `07 D0`.
+6. Set D0/RX USB-D:
    - `06 01 01`
    - `1A 06 01 02`
    - verify with `04` and `1A 06`.
-5. If startup frequency setting is enabled, set and read back D0/RX.
-6. Select D1/TX: `07 D1`.
-7. Set D1/TX USB-D and verify.
-8. If startup frequency setting is enabled, set and read back D1/TX.
-9. Return to D0/RX and verify D0/RX again.
-10. Verify SATELLITE remains ON.
-11. Start TCP listeners.
+7. If startup frequency setting is enabled, set and read back D0/RX.
+8. Select D1/TX: `07 D1`.
+9. Set D1/TX USB-D and verify.
+10. If startup frequency setting is enabled, set and read back D1/TX.
+11. Return to D0/RX and verify D0/RX again.
+12. Verify SATELLITE remains ON.
+13. Start TCP listeners.
 
-Any failed mandatory step prevents CAT/PTT from opening.
+Any failed mandatory step prevents CAT/PTT from opening. The `07 B0` exchange is a startup recovery action only; it is not part of QSY or PTT handling.
 
 ## Startup RF-to-IF calculation
 
