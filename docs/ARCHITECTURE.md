@@ -7,7 +7,7 @@ VarAC presents one receive/downlink frequency to CAT. In the HBØTR QO-100 stati
 - SAT `D0`: 433 MHz downlink / RX IF
 - SAT `D1`: 144 MHz uplink / TX IF
 
-V5.02 uses the IC-9700's native **SATELLITE mode** and normalizes the SAT band assignment before any mode or frequency write.
+V5.03 uses the IC-9700's native **SATELLITE mode** and normalizes the SAT band assignment before any mode or frequency write.
 
 ## Interfaces
 
@@ -31,7 +31,7 @@ The proxy recognizes the Icom CI-V frequency-set forms used by VarAC (`25 00` an
 
 ## Startup sequence
 
-V5.02 opens the physical radio first and does not open CAT/PTT listeners until initialization succeeds.
+V5.03 opens the physical radio first and does not open CAT/PTT listeners until initialization succeeds.
 
 1. Read SATELLITE status: `16 5A`.
 2. If needed, enable SATELLITE: `16 5A 01`; verify readback.
@@ -67,6 +67,19 @@ Default station values:
 10,489.595 MHz - 10,056.000 MHz = 433.595 MHz
 433.595 MHz - 289.500 MHz       = 144.095 MHz
 ```
+
+## CAT input compatibility
+
+V5.03 logs every incoming VarAC CAT frame. Frequency-set commands accepted by the proxy are:
+
+- `25 00` + 5 BCD frequency bytes;
+- `25 01` + 5 BCD frequency bytes;
+- classic `05` + 5 BCD frequency bytes;
+- CI-V send-frequency `00` + 5 BCD frequency bytes.
+
+Frequency readback accepts `03`, `25 00`, and `25 01` and returns SAT D0/RX.
+
+Unknown CAT frames are logged before passthrough.
 
 ## QSY sequence
 
@@ -115,3 +128,18 @@ PTT is rejected if the cached D1/TX frequency is outside the TX safety window.
 ## No virtual COM ports
 
 The proxy uses TCP on the VarAC side and owns the physical IC-9700 COM port itself.
+
+
+## VarAC-coupled shutdown
+
+After VarAC CAT has connected once, V5.03 treats closure of that CAT socket as an application shutdown request. The proxy proactively polls the socket because a graceful TCP close does not always raise a read exception.
+
+Shutdown sequence:
+
+1. close the VarAC CAT socket;
+2. send native SAT `PTT OFF` (`1C 00 00`) as a fail-safe;
+3. stop the proxy run loop;
+4. dispose CAT/PTT listeners;
+5. close the IC-9700 serial port.
+
+This behavior is hard-wired in V5.03 and has no INI setting.
