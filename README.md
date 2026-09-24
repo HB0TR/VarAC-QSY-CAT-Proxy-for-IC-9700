@@ -1,35 +1,47 @@
-# VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.02
+# VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.03
 
-A Windows CAT/PTT proxy for **VarAC + VARA SAT + Icom IC-9700** in a QO-100 transverter setup. V5.02 uses the IC-9700's **native SATELLITE mode and full-duplex operation** and automatically normalizes the SAT D0/D1 band mapping at startup, so the QO-100 downlink remains available while transmitting.
+A Windows CAT/PTT proxy for **VarAC + VARA SAT + Icom IC-9700** in a QO-100 transverter setup. V5.03 keeps the native SATELLITE/full-duplex and automatic D0/D1 band-map logic from V5.02, adds broader VarAC/Icom CAT frequency compatibility and exits automatically when VarAC closes its CAT connection.
 
 **Author:** HBØTR Stefan Franz  
 **QRZ:** https://www.qrz.com/db/HB0TR  
-**Version:** V5.02
+**Version:** V5.03
 
 > This is an independent amateur-radio project. It is not affiliated with or endorsed by VarAC, Icom, Kuhne electronic, or the VARA software author.
 
-## What's new in V5.02
+## What's new in V5.03
 
-V5.02 retains the native SATELLITE/full-duplex architecture introduced in V5.01 and adds **automatic SAT band-map detection and correction during startup**.
+V5.03 is a compatibility and lifecycle release based on field feedback from a Windows 10 / VarAC 15.0.18 / IC-9700 1.50 station.
 
-Before changing mode or frequency, the proxy now:
+### CAT/QSY compatibility
 
-1. selects SAT `D0` and reads its frequency;
-2. selects SAT `D1` and reads its frequency;
-3. accepts the normal mapping when D0 is the 70 cm side and D1 is the 2 m side;
-4. if the mapping is reversed (D0 = 2 m, D1 = 70 cm), sends CI-V `07 B0` to exchange MAIN/SUB;
-5. reads both sides again and continues only if D0 is now 70 cm and D1 is 2 m.
+The proxy now logs every incoming VarAC CAT frame and recognizes these Icom frequency-set forms:
 
-If the expected 70 cm / 2 m pair cannot be identified, startup fails closed and CAT/PTT listeners are not opened.
+- `25 00 + 5-byte BCD`
+- `25 01 + 5-byte BCD`
+- classic `05 + 5-byte BCD`
+- CI-V send-frequency `00 + 5-byte BCD`
 
-The operational mapping remains:
+Recognized frequency changes inside the configured 433 MHz RX window are converted into the tested native SAT sequence that sets D0/RX and D1/TX together. Unknown CAT frames are logged before passthrough, making future VarAC rig-definition differences visible in `QSY-CAT_Proxy.log`.
 
-| SAT side | Function | IC-9700 IF | QO-100 station mapping |
-|---|---|---:|---|
-| `D0` | Downlink / RX | 433.595 MHz | 10,489.595 MHz RF with 10,056.000 MHz RX LO |
-| `D1` | Uplink / TX | 144.095 MHz | 2,400.095 MHz RF with 2,256.000 MHz TX LO |
+Frequency readback supports `03` plus `25 00` / `25 01` query forms and always reports the SAT D0/RX frequency to VarAC.
 
-During PTT, the IC-9700 transmits on the 144 MHz uplink side while the 433 MHz downlink side remains active for receive. The `07 B0` exchange is used only during startup recovery when the SAT band assignment is reversed; it is not used for PTT.
+### VarAC-coupled shutdown
+
+V5.03 is intentionally hard-wired to exit after VarAC closes the CAT connection. There is no INI switch for this behavior.
+
+On CAT disconnect the proxy:
+
+1. closes the VarAC CAT socket;
+2. sends a fail-safe native SAT `PTT OFF` (`1C 00 00`);
+3. stops the proxy loop;
+4. closes CAT/PTT listeners and the IC-9700 serial port;
+5. allows the launcher window to close normally.
+
+The batch launcher pauses only after an error; a normal VarAC-triggered shutdown closes without waiting for a keypress.
+
+### Existing V5.02 SAT initialization retained
+
+Before changing mode or frequency, the proxy still probes SAT D0/D1. If D0 is 2 m and D1 is 70 cm, it exchanges MAIN/SUB once with `07 B0`, reads both sides again, and continues only when D0 is the 70 cm RX side and D1 is the 2 m TX side.
 
 ## Data flow
 
@@ -42,7 +54,7 @@ VarAC QO-100 downlink frequency
         |
         v
 +------------------------------------------------+
-| VarAC QSY-CAT Proxy V5.02                     |
+| VarAC QSY-CAT Proxy V5.03                     |
 |                                                |
 | CAT/QSY: TCP 127.0.0.1:9701                   |
 | PTT:     Hamlib-compatible TCP 127.0.0.1:4532 |
@@ -66,12 +78,12 @@ Icom IC-9700 in SATELLITE mode
 
 ## Tested full-duplex behavior
 
-The native SAT full-duplex design used by V5.02 was validated on the HBØTR IC-9700 station with these behaviors:
+The native SAT full-duplex design used by V5.03 was validated on the HBØTR IC-9700 station with these behaviors:
 
 - `16 5A 01` enables native SATELLITE mode.
 - `07 D0` addresses the 433 MHz downlink/RX SAT side.
 - `07 D1` addresses the 144 MHz uplink/TX SAT side.
-- V5.02 probes D0/D1 before initialization and uses `07 B0` only when the two SAT bands are reversed.
+- V5.03 probes D0/D1 before initialization and uses `07 B0` only when the two SAT bands are reversed.
 - Both SAT sides can be set to USB-D with:
   - `06 01 01` — USB
   - `1A 06 01 02` — DATA ON / filter 2
@@ -101,7 +113,10 @@ No virtual COM-port pair is required.
 5. The proxy opens the radio, enables SATELLITE mode if needed, probes the D0/D1 band assignment, exchanges MAIN/SUB with `07 B0` if the 2 m / 70 cm sides are reversed, initializes both SAT sides to USB-D, optionally applies the configured startup frequencies, and verifies the resulting state.
 6. Only after successful initialization are CAT port `9701` and PTT port `4532` opened.
 7. Start VarAC / VARA SAT.
-8. For the first transmit test, use minimum safe drive power and verify the complete converter chain.
+8. Enable VarAC CAT frequency readback so the displayed frequency follows D0/RX.
+9. For the first transmit test, use minimum safe drive power and verify the complete converter chain.
+
+When VarAC later closes its CAT connection, V5.03 shuts itself down automatically.
 
 ## VarAC configuration
 
@@ -121,7 +136,7 @@ Host:              127.0.0.1
 Port:              9701
 Mode:              USB-D
 Diff Hz:            -10056000000
-Read frequency:    OFF initially
+Read frequency:    ON
 ```
 
 The VarAC `Diff Hz` converts QO-100 downlink RF to the IC-9700 RX IF:
@@ -144,9 +159,9 @@ The proxy accepts the Hamlib-style `T 1` / `T 0` PTT commands.
 
 <a href="docs/images/varac-rig-control.jpg"><img src="docs/images/varac-rig-control.jpg" alt="VarAC RIG Control configuration for the IC-9700 proxy" width="100%"></a>
 
-## IC-9700 operation in V5.02
+## IC-9700 operation in V5.03
 
-V5.01 is designed for **native SATELLITE mode**.
+V5.03 is designed for **native SATELLITE mode**.
 
 ```text
 SATELLITE mode:        ON
@@ -234,7 +249,7 @@ The helper `tools/Test_QO100_Startup_Frequency_Config_HB0TR.ps1` validates the I
 
 ## QSY sequence
 
-For each VarAC QSY inside the configured 433 MHz RX window, V5.02 performs:
+For each VarAC QSY inside the configured 433 MHz RX window, V5.03 performs:
 
 ```text
 07 D0       select SAT D0/RX
@@ -245,6 +260,23 @@ For each VarAC QSY inside the configured 433 MHz RX window, V5.02 performs:
 ```
 
 The D0 and D1 frequency writes were tested independently in SATELLITE mode; setting one side did not move the other side.
+
+### VarAC CAT commands accepted by V5.03
+
+For maximum compatibility, V5.03 accepts modern and classic Icom frequency commands from VarAC:
+
+```text
+25 00 <5 BCD bytes>   set VFO/frequency
+25 01 <5 BCD bytes>   alternate VFO selector
+05    <5 BCD bytes>   classic set-frequency
+00    <5 BCD bytes>   CI-V send-frequency form
+03                    read current D0/RX frequency
+25 00                 read VFO/frequency
+25 01                 alternate read selector
+```
+
+Every incoming CAT frame is logged with `VARAC CAT RX:`. A recognized QSY is additionally logged as `VARAC CAT SET FREQ ...` before the normal five-step SAT QSY sequence.
+
 
 ## PTT sequence
 
@@ -259,7 +291,7 @@ No `07 D0/D1` selection and no `07 B0` XCHG are used for PTT.
 
 ## USB-D initialization and VarAC mode commands
 
-V5.02 initializes both SAT sides to USB-D using the tested classic CI-V sequence:
+V5.03 initializes both SAT sides to USB-D using the tested classic CI-V sequence:
 
 ```text
 06 01 01
@@ -278,7 +310,7 @@ VarAC Icom mode command `0x26` is acknowledged locally rather than forwarded to 
 
 ## Startup safety / fail-closed behavior
 
-Before opening CAT/PTT listeners, V5.02 verifies:
+Before opening CAT/PTT listeners, V5.03 verifies:
 
 - SATELLITE mode is ON;
 - D0/D1 contain the expected 70 cm / 2 m band pair, with automatic `07 B0` correction if initially reversed;
@@ -330,13 +362,18 @@ PTT TX OFF (1C 00 00) ... OK (FB)
 PTT = RX | D0/downlink remains the receive side.
 ```
 
-## Upgrade from V5.01
+## Upgrade from V5.02
 
-V5.02 keeps the V5.01 native SATELLITE/full-duplex control model and configuration. No new INI setting is required.
+V5.03 keeps the V5.02 SAT band-map and native full-duplex radio model. No additional INI parameter is required.
 
-The change is in startup handling: V5.02 no longer assumes that the IC-9700 entered SAT mode with 70 cm already on D0 and 2 m on D1. It probes both sides first and, when necessary, performs a single `07 B0` MAIN/SUB exchange followed by readback verification.
+Changes to be aware of:
 
-Users upgrading directly from V5.00 should also apply the V5.01 SATELLITE-mode configuration changes documented in this README.
+- CAT frequency input accepts additional Icom command forms and is fully logged.
+- VarAC frequency readback should be enabled if you want the current frequency displayed.
+- The proxy now exits automatically when the VarAC CAT connection closes.
+- The launcher and configuration headers now correctly identify V5.03.
+
+Users upgrading directly from V5.00 or V5.01 should also review the native SATELLITE-mode configuration described above.
 
 ## Safety
 
