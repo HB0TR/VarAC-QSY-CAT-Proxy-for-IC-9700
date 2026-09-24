@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## V5.03 - 2026-09-24
+
+### Added
+- Full logging of every incoming VarAC CAT frame with `VARAC CAT RX:`.
+- Broader Icom frequency-set compatibility: `25 00`, `25 01`, classic `05`, and CI-V send-frequency `00`.
+- Frequency readback compatibility for `03`, `25 00`, and `25 01`.
+- Fail-safe `PTT OFF` during VarAC-triggered proxy shutdown.
+
+### Changed
+- Proxy lifecycle is now hard-wired to VarAC CAT: after VarAC has connected once, closing that CAT connection stops the proxy instead of leaving it waiting for reconnection.
+- The launcher exits normally after a clean VarAC-triggered shutdown and pauses only on an error.
+- README now recommends VarAC CAT frequency readback ON so the current D0/RX frequency is displayed.
+
+### Fixed
+- Corrected stale V5.01 labels in the Windows batch launcher and default `proxy_config.ini`.
+- Corrected stale V5.01 wording in the V5.02 documentation.
+- Added explicit logging for previously silent/unhandled CAT frames, addressing the diagnostic gap seen in field testing with VarAC 15.0.18.
+
+### Field-feedback basis
+- A Windows 10 / VarAC 15.0.18 / IC-9700 firmware 1.50 report confirmed that V5.02 radio initialization and PTT worked while frequency display/QSY behavior required improved CAT compatibility and diagnostics.
+
 ## V5.02 - 2026-09-20
 
 ### Added
