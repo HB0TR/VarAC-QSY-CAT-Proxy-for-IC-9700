@@ -45,15 +45,23 @@ jobs:
         shell: powershell
         run: |
           $text = Get-Content -LiteralPath ".\VarAC_QSY-CAT_Proxy_IC-9700_HB0TR.ps1" -Raw
-          $match = [regex]::Match(
-            $text,
-            "(?s)\$source\s*=\s*@'\r?\n(?<code>.*?)\r?\n'@"
-          )
-
-          if (-not $match.Success) {
-            throw "Embedded C# source here-string was not found."
+          $startMarker = "`$source = @'"
+          $start = $text.IndexOf($startMarker)
+          if ($start -lt 0) {
+            throw "Embedded C# source start marker was not found."
           }
 
-          $csharp = $match.Groups["code"].Value
+          $bodyStart = $text.IndexOf("`n", $start)
+          if ($bodyStart -lt 0) {
+            throw "Embedded C# source body start was not found."
+          }
+          $bodyStart++
+
+          $end = $text.IndexOf("`n'@", $bodyStart)
+          if ($end -lt 0) {
+            throw "Embedded C# source end marker was not found."
+          }
+
+          $csharp = $text.Substring($bodyStart, $end - $bodyStart)
           Add-Type -TypeDefinition $csharp -Language CSharp -ReferencedAssemblies "System.dll"
           Write-Host "Embedded C# compile OK."
