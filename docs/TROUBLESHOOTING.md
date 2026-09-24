@@ -8,7 +8,7 @@
 
 ## Startup stops before port 9701 / 4532 opens
 
-V5.02 intentionally fails closed. Check `QSY-CAT_Proxy.log`.
+V5.03 intentionally fails closed. Check `QSY-CAT_Proxy.log`.
 
 Typical causes:
 
@@ -22,7 +22,7 @@ Typical causes:
 
 ## Startup shows reversed D0/D1 bands
 
-V5.02 checks the SAT band assignment before writing modes or frequencies.
+V5.03 checks the SAT band assignment before writing modes or frequencies.
 
 A reversed startup state is expected to look like:
 
@@ -73,6 +73,16 @@ The existing SAT frequencies are retained, but the safety windows and USB-D init
 
 ## VarAC frequency changes do nothing
 
+V5.03 logs every CAT frame received from VarAC. After a slot change or manual frequency entry, check for:
+
+```text
+VARAC CAT RX: ...
+VARAC CAT SET FREQ via ...
+SAT SET START: ...
+```
+
+If `VARAC CAT RX` appears but `VARAC CAT SET FREQ` does not, include that raw frame in a bug report. V5.03 recognizes Icom `25 00`, `25 01`, `05`, and `00` frequency-set forms.
+
 Check VarAC:
 
 ```text
@@ -114,11 +124,11 @@ HAMLIB RX: T 1
 PTT TX ON (1C 00 01) ... OK (FB)
 ```
 
-PTT in V5.02 does not switch D0/D1 and does not use XCHG. `07 B0` is used only during startup if the SAT band assignment is reversed.
+PTT in V5.03 does not switch D0/D1 and does not use XCHG. `07 B0` is used only during startup if the SAT band assignment is reversed.
 
 ## I cannot hear the downlink during TX
 
-V5.02 is designed around native IC-9700 SAT full duplex. Verify:
+V5.03 is designed around native IC-9700 SAT full duplex. Verify:
 
 - SATELLITE mode is ON;
 - D0 is the 433 MHz downlink/RX side;
@@ -134,7 +144,32 @@ Keep:
 IGNORE_VARAC_MODE_COMMANDS=1
 ```
 
-V5.02 initializes USB-D itself. VarAC command `0x26` is acknowledged locally by default rather than being forwarded to the radio.
+V5.03 initializes USB-D itself. VarAC command `0x26` is acknowledged locally by default rather than being forwarded to the radio.
+
+## Frequency is not displayed in VarAC
+
+Enable CAT frequency readback in VarAC. A configuration with `RigCatFreqRead=OFF` intentionally disables the periodic read request.
+
+For V5.03 the recommended setting is:
+
+```text
+Read frequency: ON
+Read interval:  2 seconds
+```
+
+The proxy answers `03`, `25 00`, and `25 01` read requests with the SAT D0/RX frequency.
+
+## Proxy does not close when VarAC exits
+
+V5.03 is hard-wired to close when the VarAC CAT socket disconnects. The log should end with messages similar to:
+
+```text
+VarAC CAT connection closed. V5.03 hard-wired behavior: stopping proxy with VarAC.
+EXIT SAFETY PTT OFF (1C 00 00) ... OK (FB)
+V5.03 shutdown complete: VarAC CAT disconnected; proxy is exiting.
+```
+
+The launcher closes automatically after a normal shutdown. It pauses only if PowerShell returns an error code.
 
 ## Wrong QO-100 frequency in VarAC
 
