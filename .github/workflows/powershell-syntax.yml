@@ -40,3 +40,20 @@ jobs:
           if ($failed) {
             exit 1
           }
+
+      - name: Compile embedded C# proxy
+        shell: powershell
+        run: |
+          $text = Get-Content -LiteralPath ".\VarAC_QSY-CAT_Proxy_IC-9700_HB0TR.ps1" -Raw
+          $match = [regex]::Match(
+            $text,
+            "(?s)\$source\s*=\s*@'\r?\n(?<code>.*?)\r?\n'@"
+          )
+
+          if (-not $match.Success) {
+            throw "Embedded C# source here-string was not found."
+          }
+
+          $csharp = $match.Groups["code"].Value
+          Add-Type -TypeDefinition $csharp -Language CSharp -ReferencedAssemblies "System.dll"
+          Write-Host "Embedded C# compile OK."
