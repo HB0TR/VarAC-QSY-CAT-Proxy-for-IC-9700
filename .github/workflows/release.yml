@@ -1,23 +1,26 @@
 name: Build and publish release
 
 on:
-  workflow_dispatch:
-  push:
+  workflow_run:
+    workflows:
+      - PowerShell syntax check
+    types:
+      - completed
     branches:
       - main
-    paths:
-      - CITATION.cff
-      - .github/workflows/release.yml
 
 permissions:
   contents: write
 
 jobs:
   release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: windows-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Read release version
         id: version
@@ -132,4 +135,4 @@ jobs:
             exit 0
           }
 
-          gh release create $tag $archive SHA256SUMS.txt --target "$env:GITHUB_SHA" --title "VarAC QSY-CAT Proxy for IC-9700 by HBØTR V$version" --notes-file "RELEASE_NOTES.md"
+          gh release create $tag $archive SHA256SUMS.txt --target "${{ github.event.workflow_run.head_sha }}" --title "VarAC QSY-CAT Proxy for IC-9700 by HBØTR V$version" --notes-file "RELEASE_NOTES.md" --prerelease

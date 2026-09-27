@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## V5.04 - 2026-09-27
+
+### Added
+- Opt-in QO-100 RF/10-Hz CAT transport (`VARAC_CAT_RF_10HZ=1`) with a matching VarAC rig section. VarAC divides the 10.489 GHz RF by 10 to fit five BCD bytes; the proxy converts back to Hz, subtracts the RX converter LO, and applies its established D0/RX and D1/TX safety windows.
+- RF/10-Hz readback translates the 433 MHz IF back to the 10 GHz RF in 10 Hz units. The original IF/1-Hz behavior is the default when the new option is unset.
+- Offline conversion and safety checks in GitHub Actions, in addition to PowerShell parsing and embedded C# compilation.
+
+### Safety and compatibility
+- Malformed, unsupported, out-of-window and nonrepresentable frequency requests in RF/10-Hz mode are rejected rather than forwarded to the radio.
+- The legacy V5.03 CAT mode remains available unchanged.
+- Field logs from VarAC 15.0.18 / IC-9700 1.50 confirmed SAT ON, D0/RX and D1/TX initialization, and correct IF readback, but showed invalid BCD for QSY with the stock 1-Hz/10-digit CAT definition and a large VarAC offset. Live validation of the new RF/10-Hz VarAC rig section is pending.
+
 ## V5.03 - 2026-09-24
 
 ### Added

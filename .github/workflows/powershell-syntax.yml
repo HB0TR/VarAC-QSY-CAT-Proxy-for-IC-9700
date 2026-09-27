@@ -65,3 +65,7 @@ jobs:
           $csharp = $text.Substring($bodyStart, $end - $bodyStart)
           Add-Type -TypeDefinition $csharp -Language CSharp -ReferencedAssemblies "System.dll"
           Write-Host "Embedded C# compile OK."
+
+      - name: Verify RF/10-Hz CAT mapping without a radio
+        shell: powershell
+        run: .\tools\Test_Cat_Rf10Hz_Offline.ps1

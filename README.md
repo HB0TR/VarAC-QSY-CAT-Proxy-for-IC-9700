@@ -1,14 +1,20 @@
-# VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.03
+# VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.04
 
-A Windows CAT/PTT proxy for **VarAC + VARA SAT + Icom IC-9700** in a QO-100 transverter setup. V5.03 keeps the native SATELLITE/full-duplex and automatic D0/D1 band-map logic from V5.02, adds broader VarAC/Icom CAT frequency compatibility and exits automatically when VarAC closes its CAT connection.
+A Windows CAT/PTT proxy for **VarAC + VARA SAT + Icom IC-9700** in a QO-100 transverter setup. V5.04 adds an optional 10 Hz CAT transport for QO-100 RF frequencies while retaining the native SATELLITE/full-duplex and automatic D0/D1 band mapping.
 
 **Author:** HBØTR Stefan Franz  
 **QRZ:** https://www.qrz.com/db/HB0TR  
-**Version:** V5.03
+**Version:** V5.04
 
 > This is an independent amateur-radio project. It is not affiliated with or endorsed by VarAC, Icom, Kuhne electronic, or the VARA software author.
 
-## What's new in V5.03
+## What's new in V5.04
+
+The optional `VARAC_CAT_RF_10HZ=1` mode lets VarAC display and QSY at 10,489 MHz while the proxy tunes the IC-9700 at the 433 MHz RX IF and corresponding 144 MHz TX IF. Use the matching [VarAC CAT section](docs/VarAC-QO100-RF10Hz-CAT.ini) and set VarAC **Offset Hz to 0**. Its 10 Hz CAT resolution divides the 11-digit RF frequency before fitting it in Icom's five BCD bytes; the proxy restores Hz and subtracts `RX_CONVERTER_LO_HZ`.
+
+The setting defaults to `0` for V5.03-compatible 1 Hz IF control. The new mode rejects malformed or out-of-window RF CAT commands instead of forwarding them to the IC-9700. Offline tests cover conversion, readback and safety bounds. Live operation with VarAC 15.0.18 still needs station validation.
+
+### V5.03 CAT compatibility and shutdown retained
 
 V5.03 is a compatibility and lifecycle release based on field feedback from a Windows 10 / VarAC 15.0.18 / IC-9700 1.50 station.
 
@@ -23,7 +29,7 @@ The proxy now logs every incoming VarAC CAT frame and recognizes these Icom freq
 
 Recognized frequency changes inside the configured 433 MHz RX window are converted into the tested native SAT sequence that sets D0/RX and D1/TX together. Unknown CAT frames are logged before passthrough, making future VarAC rig-definition differences visible in `QSY-CAT_Proxy.log`.
 
-Frequency readback supports `03` plus `25 00` / `25 01` query forms and always reports the SAT D0/RX frequency to VarAC.
+Frequency readback supports `03` plus `25 00` / `25 01` query forms. In the new RF/10-Hz mode it reports the QO-100 RF in 10 Hz units; in the legacy mode it reports the SAT D0/RX IF in 1 Hz units.
 
 ### VarAC-coupled shutdown
 
@@ -48,18 +54,18 @@ Before changing mode or frequency, the proxy still probes SAT D0/D1. If D0 is 2 
 ```text
 VarAC QO-100 downlink frequency
         |
-        | Diff Hz = -10056000000
+        | RF / 10 Hz in five CAT BCD bytes
         v
-433 MHz RX IF presented to CAT
+QO-100 RF/10-Hz CAT units
         |
         v
 +------------------------------------------------+
-| VarAC QSY-CAT Proxy V5.03                     |
+| VarAC QSY-CAT Proxy V5.04                     |
 |                                                |
 | CAT/QSY: TCP 127.0.0.1:9701                   |
 | PTT:     Hamlib-compatible TCP 127.0.0.1:4532 |
 |                                                |
-| SAT D0 / RX = requested 433 MHz IF             |
+| SAT D0 / RX = RF - converter LO (433 MHz IF)   |
 | SAT D1 / TX = D0 - 289.500 MHz                 |
 | PTT = native CI-V 1C 00 01 / 1C 00 00         |
 +------------------------------------------------+
@@ -113,10 +119,10 @@ No virtual COM-port pair is required.
 5. The proxy opens the radio, enables SATELLITE mode if needed, probes the D0/D1 band assignment, exchanges MAIN/SUB with `07 B0` if the 2 m / 70 cm sides are reversed, initializes both SAT sides to USB-D, optionally applies the configured startup frequencies, and verifies the resulting state.
 6. Only after successful initialization are CAT port `9701` and PTT port `4532` opened.
 7. Start VarAC / VARA SAT.
-8. Enable VarAC CAT frequency readback so the displayed frequency follows D0/RX.
+8. For 10 GHz RF display and QSY, configure the matching RF/10-Hz CAT section and proxy option below before enabling VarAC frequency readback.
 9. For the first transmit test, use minimum safe drive power and verify the complete converter chain.
 
-When VarAC later closes its CAT connection, V5.03 shuts itself down automatically.
+When VarAC later closes its CAT connection, V5.04 shuts itself down automatically.
 
 ## VarAC configuration
 
@@ -126,26 +132,36 @@ Use **VARA SAT** as the modem application.
 
 <a href="docs/images/application-launcher.jpg"><img src="docs/images/application-launcher.jpg" alt="VarAC Application Launcher configuration" width="100%"></a>
 
-### Frequency control
+### Frequency control: QO-100 RF/10-Hz mode (recommended for 10 GHz display)
+
+1. Append the section in [`docs/VarAC-QO100-RF10Hz-CAT.ini`](docs/VarAC-QO100-RF10Hz-CAT.ini) to the **installed** VarAC `VarAC_cat_commands.ini`. Keep its existing rig sections.
+2. In `proxy_config.ini`, set `VARAC_CAT_RF_10HZ=1` and keep `RX_CONVERTER_LO_HZ=10056000000` for this converter.
+3. In VarAC, select the new rig name and these settings:
 
 ```text
 Frequency control: CAT
-Rig:               Icom IC-9700
+Rig:               IC-9700 QO-100 Proxy RF 10Hz
 CAT connection:    TCP
 Host:              127.0.0.1
 Port:              9701
 Mode:              USB-D
-Diff Hz:            -10056000000
-Read frequency:    ON
+Offset Hz:         0
+Read frequency:    ON, every 2 seconds
 ```
 
-The VarAC `Diff Hz` converts QO-100 downlink RF to the IC-9700 RX IF:
+Enter/display the **RF** downlink frequency, for example 10,489.595 MHz. The new VarAC CAT section uses `SetFreqVfoA_hz_res=10` and `ReadFreqVfoA_Result_hz_res=10`: both directions carry 10 Hz units inside the ten-digit Icom BCD payload. The proxy performs the frequency translation:
 
 ```text
-10,489.595 MHz - 10,056.000 MHz = 433.595 MHz
+VarAC RF 10,489.595 MHz / 10 Hz = 1,048,959,500 CAT units
+Proxy RX IF = 10,489.595 MHz - 10,056.000 MHz = 433.595 MHz
+Proxy TX IF = 433.595 MHz - 289.500 MHz = 144.095 MHz
 ```
 
-`QO100_DL_RF_HZ` in `proxy_config.ini` is a separate setting: it defines the **startup QO-100 downlink frequency** used by the proxy before VarAC connects.
+Do not enter `-10056000000` in VarAC Offset Hz for this mode. VarAC's help warns against simultaneous offset and frequency readback, and field logs showed invalid BCD QSY bytes with the legacy 10-digit/1-Hz CAT definition. The proxy's `RX_CONVERTER_LO_HZ` handles the converter LO. `QO100_DL_RF_HZ` independently defines the startup frequency before VarAC connects.
+
+### Legacy V5.03-compatible IF/1-Hz mode
+
+With `VARAC_CAT_RF_10HZ=0`, keep the original `Icom IC-9700` VarAC CAT section. It carries 433 MHz IF in 1 Hz units. This mode does **not** translate RF in the CAT path; VarAC must issue an actual IF frequency. The legacy VarAC Offset Hz setting at 10 GHz was not validated for reliable Slot-QSY and should not be used as a substitute for the RF/10-Hz section.
 
 ### PTT control
 
@@ -159,9 +175,9 @@ The proxy accepts the Hamlib-style `T 1` / `T 0` PTT commands.
 
 <a href="docs/images/varac-rig-control.jpg"><img src="docs/images/varac-rig-control.jpg" alt="VarAC RIG Control configuration for the IC-9700 proxy" width="100%"></a>
 
-## IC-9700 operation in V5.03
+## IC-9700 operation in V5.04
 
-V5.03 is designed for **native SATELLITE mode**.
+V5.04 is designed for **native SATELLITE mode**.
 
 ```text
 SATELLITE mode:        ON
@@ -200,6 +216,7 @@ RX_TX_DELTA_HZ=289500000
 STARTUP_SET_FREQUENCIES=1
 QO100_DL_RF_HZ=10489595000
 RX_CONVERTER_LO_HZ=10056000000
+VARAC_CAT_RF_10HZ=0
 
 RX_IF_MIN_HZ=433000000
 RX_IF_MAX_HZ=434000000
@@ -249,7 +266,7 @@ The helper `tools/Test_QO100_Startup_Frequency_Config_HB0TR.ps1` validates the I
 
 ## QSY sequence
 
-For each VarAC QSY inside the configured 433 MHz RX window, V5.03 performs:
+For each valid VarAC QSY mapped to the configured 433 MHz RX window, V5.04 performs:
 
 ```text
 07 D0       select SAT D0/RX
@@ -261,9 +278,9 @@ For each VarAC QSY inside the configured 433 MHz RX window, V5.03 performs:
 
 The D0 and D1 frequency writes were tested independently in SATELLITE mode; setting one side did not move the other side.
 
-### VarAC CAT commands accepted by V5.03
+### VarAC CAT commands accepted by V5.04
 
-For maximum compatibility, V5.03 accepts modern and classic Icom frequency commands from VarAC:
+In legacy IF mode, V5.04 accepts the same modern and classic Icom frequency commands as V5.03. In RF/10-Hz mode, only well-formed commands mapped inside the RX safety window are accepted:
 
 ```text
 25 00 <5 BCD bytes>   set VFO/frequency
@@ -291,7 +308,7 @@ No `07 D0/D1` selection and no `07 B0` XCHG are used for PTT.
 
 ## USB-D initialization and VarAC mode commands
 
-V5.03 initializes both SAT sides to USB-D using the tested classic CI-V sequence:
+V5.04 initializes both SAT sides to USB-D using the tested classic CI-V sequence:
 
 ```text
 06 01 01
@@ -310,7 +327,7 @@ VarAC Icom mode command `0x26` is acknowledged locally rather than forwarded to 
 
 ## Startup safety / fail-closed behavior
 
-Before opening CAT/PTT listeners, V5.03 verifies:
+Before opening CAT/PTT listeners, V5.04 verifies:
 
 - SATELLITE mode is ON;
 - D0/D1 contain the expected 70 cm / 2 m band pair, with automatic `07 B0` correction if initially reversed;
@@ -362,16 +379,15 @@ PTT TX OFF (1C 00 00) ... OK (FB)
 PTT = RX | D0/downlink remains the receive side.
 ```
 
-## Upgrade from V5.02
+## Upgrade from V5.03
 
-V5.03 keeps the V5.02 SAT band-map and native full-duplex radio model. No additional INI parameter is required.
+V5.04 retains the V5.03 SAT band-map, full-duplex control and CAT shutdown. Existing configurations without `VARAC_CAT_RF_10HZ` continue in legacy IF/1-Hz mode. To display and QSY at 10 GHz, use the matching RF/10-Hz CAT section and set the new INI option to `1`.
 
 Changes to be aware of:
 
-- CAT frequency input accepts additional Icom command forms and is fully logged.
-- VarAC frequency readback should be enabled if you want the current frequency displayed.
-- The proxy now exits automatically when the VarAC CAT connection closes.
-- The launcher and configuration headers now correctly identify V5.03.
+- In RF/10-Hz mode, VarAC Offset Hz must be `0` and frequency readback should be enabled.
+- The proxy validates RF/10-Hz writes against both IF safety windows and rejects unknown frequency forms.
+- The launcher and configuration headers identify V5.04.
 
 Users upgrading directly from V5.00 or V5.01 should also review the native SATELLITE-mode configuration described above.
 
@@ -409,10 +425,12 @@ The proxy writes `QSY-CAT_Proxy.log` next to the script. This file is intentiona
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── tools/
-│   └── Test_QO100_Startup_Frequency_Config_HB0TR.ps1
+│   ├── Test_QO100_Startup_Frequency_Config_HB0TR.ps1
+│   └── Test_Cat_Rf10Hz_Offline.ps1
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── TROUBLESHOOTING.md
+│   ├── VarAC-QO100-RF10Hz-CAT.ini
 │   ├── LICENSE-OPTIONS.md
 │   └── images/
 └── .github/

@@ -1,4 +1,4 @@
-# VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.03 SAT AUTO BAND-MAP
+# VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.04 SAT AUTO BAND-MAP
 # Author: HBØTR Stefan Franz | https://www.qrz.com/db/HB0TR
 # Copyright (c) 2026 Stefan Franz, HBØTR
 # SPDX-License-Identifier: MIT
@@ -48,6 +48,10 @@ $startupSetFreq = ((Get-Cfg $cfg 'STARTUP_SET_FREQUENCIES' '1') -ne '0')
 # Use integer Hz in the INI to avoid locale-dependent decimal parsing.
 $qo100DlRfHz    = [Int64](Get-Cfg $cfg 'QO100_DL_RF_HZ' '10489595000')
 $rxConverterLoHz = [Int64](Get-Cfg $cfg 'RX_CONVERTER_LO_HZ' '10056000000')
+$varacRf10Hz = ((Get-Cfg $cfg 'VARAC_CAT_RF_10HZ' '0') -eq '1')
+if ($varacRf10Hz -and ($rxConverterLoHz -lt 0 -or $rxConverterLoHz % 10 -ne 0)) {
+    throw 'VARAC_CAT_RF_10HZ requires a nonnegative RX_CONVERTER_LO_HZ divisible by 10.'
+}
 
 # Derive the IC-9700 IFs from the QO-100 RF frequency.
 $startupRxHz    = $qo100DlRfHz - $rxConverterLoHz
@@ -68,7 +72,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 
-namespace QO100CatProxyV503
+namespace QO100CatProxyV504
 {
     public sealed class Proxy : IDisposable
     {
@@ -84,6 +88,8 @@ namespace QO100CatProxyV503
         private readonly bool startupSetFreq;
         private readonly long startupRxHz, startupTxHz;
         private readonly bool ignoreMode;
+        private readonly bool varacRf10Hz;
+        private readonly long rxConverterLoHz;
         private readonly string logFile;
         private readonly List<byte> appBuffer = new List<byte>();
         private readonly StringBuilder hamBuffer = new StringBuilder();
@@ -96,7 +102,7 @@ namespace QO100CatProxyV503
         public Proxy(string host, int port, string hamHost, int hamPort, string radioPort, int baud, byte civAddress,
                      long deltaHz, long rxIfMinHz, long rxIfMaxHz, long txIfMinHz, long txIfMaxHz,
                      bool startupSetFrequencies, long startupRxFrequencyHz, long startupTxFrequencyHz,
-                     bool ignoreModeCommands, string logPath)
+                     bool ignoreModeCommands, bool rf10Hz, long converterLoHz, string logPath)
         {
             listener = new TcpListener(IPAddress.Parse(host), port);
             hamListener = new TcpListener(IPAddress.Parse(hamHost), hamPort);
@@ -105,7 +111,8 @@ namespace QO100CatProxyV503
             startupSetFreq = startupSetFrequencies;
             startupRxHz = startupRxFrequencyHz;
             startupTxHz = startupTxFrequencyHz;
-            ignoreMode = ignoreModeCommands; logFile = logPath;
+            ignoreMode = ignoreModeCommands; varacRf10Hz = rf10Hz;
+            rxConverterLoHz = converterLoHz; logFile = logPath;
             radio = new SerialPort(radioPort, baud, Parity.None, 8, StopBits.One);
             radio.Handshake = Handshake.None;
             // Matches DTR=H / RTS=H from the working direct CAT test.
@@ -119,11 +126,13 @@ namespace QO100CatProxyV503
 
         public void Run()
         {
-            Log("=== VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.03 SAT AUTO BAND-MAP started ===");
+            Log("=== VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.04 SAT AUTO BAND-MAP started ===");
             Log("Author HBØTR Stefan Franz | https://www.qrz.com/db/HB0TR");
             Log("RADIO INIT: native SATELLITE FULL-DUPLEX; auto-detect D0/D1 band mapping; exchange MAIN/SUB if reversed; QO-100 startup frequencies; USB-D.");
             Log("PTT MODE: native SAT PTT only (1C 00 01 / 1C 00 00); no XCHG.");
-            Log("LIFECYCLE: V5.03 exits automatically when the VarAC CAT connection closes.");
+            Log("LIFECYCLE: V5.04 exits automatically when the VarAC CAT connection closes.");
+            Log(varacRf10Hz ? "VARAC CAT: QO-100 RF in 10 Hz BCD units; proxy translates RF to RX IF." :
+                "VARAC CAT: IC-9700 IF in 1 Hz BCD units (V5.03 compatible).");
             Log(String.Format("CAT/Frequency: {0} | Hamlib/PTT: {1} | Radio: {2} | {3} baud | CI-V {4:X2}h",
                 ((IPEndPoint)listener.LocalEndpoint), ((IPEndPoint)hamListener.LocalEndpoint), radio.PortName, radio.BaudRate, civ));
 
@@ -198,7 +207,7 @@ namespace QO100CatProxyV503
                 }
             }
 
-            Log("V5.03 shutdown complete: VarAC CAT disconnected; proxy is exiting.");
+            Log("V5.04 shutdown complete: VarAC CAT disconnected; proxy is exiting.");
         }
 
         private bool InitializeRadio()
@@ -571,7 +580,7 @@ namespace QO100CatProxyV503
 
             if (shouldExit)
             {
-                Log(reason + " V5.03 hard-wired behavior: stopping proxy with VarAC.");
+                Log(reason + " V5.04 hard-wired behavior: stopping proxy with VarAC.");
 
                 // Fail safe: never leave TX asserted when the controlling CAT client exits.
                 try
@@ -805,6 +814,13 @@ namespace QO100CatProxyV503
                     ReplyAck(f,false);
                     return;
                 }
+                long rawHz = hz;
+                if (!TryMapVaracFrequency(rawHz,out hz))
+                {
+                    Log(String.Format("VARAC CAT set-frequency 25 rejected: {0} CAT units outside RX IF window.",rawHz));
+                    ReplyAck(f,false);
+                    return;
+                }
                 Log(String.Format("VARAC CAT SET FREQ via 25 {0:X2}: {1} Hz",f[5],hz));
                 HandleSetFrequency(f,hz,true);
                 return;
@@ -817,6 +833,13 @@ namespace QO100CatProxyV503
                 if (!TryDecodeBcdFrequency(f,5,out hz))
                 {
                     Log("VARAC CAT set-frequency 05 decode failed.");
+                    ReplyAck(f,false);
+                    return;
+                }
+                long rawHz = hz;
+                if (!TryMapVaracFrequency(rawHz,out hz))
+                {
+                    Log(String.Format("VARAC CAT set-frequency 05 rejected: {0} CAT units outside RX IF window.",rawHz));
                     ReplyAck(f,false);
                     return;
                 }
@@ -836,12 +859,18 @@ namespace QO100CatProxyV503
                     Log("VARAC CAT set-frequency 00 decode failed.");
                     return;
                 }
+                long rawHz = hz;
+                if (!TryMapVaracFrequency(rawHz,out hz))
+                {
+                    Log(String.Format("VARAC CAT set-frequency 00 rejected: {0} CAT units outside RX IF window.",rawHz));
+                    return;
+                }
                 Log(String.Format("VARAC CAT SET FREQ via 00: {0} Hz",hz));
                 HandleSetFrequency(f,hz,false);
                 return;
             }
 
-            // V5.03 SAT auto band-map initializes D0/RX and D1/TX to USB-D using
+            // SAT auto band-map initializes D0/RX and D1/TX to USB-D using
             // the tested 06 + 1A 06 path. VarAC 0x26 mode commands remain
             // acknowledged locally and are NOT sent to the radio.
             if (ignoreMode && cmd == 0x26)
@@ -856,13 +885,26 @@ namespace QO100CatProxyV503
             if (cmd == 0x25 && f.Length == 7 && (f[5] == 0x00 || f[5] == 0x01))
             {
                 long hz = QueryRxFrequency();
-                if (hz > 0) ReplyFrequency25(f,hz); else ReplyAck(f,false);
+                long catHz;
+                if (hz > 0 && TryMapRxToVarac(hz,out catHz)) ReplyFrequency25(f,catHz);
+                else ReplyAck(f,false);
                 return;
             }
             if (cmd == 0x03 && f.Length == 6)
             {
                 long hz = QueryRxFrequency();
-                if (hz > 0) ReplyFrequency03(f,hz); else ReplyAck(f,false);
+                long catHz;
+                if (hz > 0 && TryMapRxToVarac(hz,out catHz)) ReplyFrequency03(f,catHz);
+                else ReplyAck(f,false);
+                return;
+            }
+
+            // In RF/10-Hz mode never forward an unrecognized frequency command
+            // to the IC-9700: its payload describes RF, not an IC-9700 IF.
+            if (varacRf10Hz && (cmd == 0x25 || cmd == 0x05 || cmd == 0x00))
+            {
+                Log("VARAC CAT unsupported frequency frame rejected in RF/10-Hz mode.");
+                if (cmd != 0x00) ReplyAck(f,false);
                 return;
             }
 
@@ -1063,6 +1105,36 @@ namespace QO100CatProxyV503
             return Int64.TryParse(s.ToString(),NumberStyles.None,CultureInfo.InvariantCulture,out hz);
         }
 
+        // The optional VarAC profile divides its displayed 10 GHz RF by 10 before
+        // packing five BCD bytes. Convert back to Hz and then to the 433 MHz IF.
+        // Its RF/10-Hz units are never sent directly to the radio.
+        private bool TryMapVaracFrequency(long catUnits,out long rxHz)
+        {
+            rxHz=-1;
+            if (!varacRf10Hz) { rxHz=catUnits; return true; }
+            if (catUnits < 0 || rxConverterLoHz < 0 ||
+                catUnits > (Int64.MaxValue-rxConverterLoHz)/10) return false;
+            long rfHz=catUnits*10;
+            rxHz=rfHz-rxConverterLoHz;
+            return rxHz>=rxMin && rxHz<=rxMax;
+        }
+
+        private bool TryMapRxToVarac(long rxHz,out long catUnits)
+        {
+            catUnits=-1;
+            if (!varacRf10Hz) { catUnits=rxHz; return true; }
+            if (rxHz<rxMin || rxHz>rxMax || rxConverterLoHz<0 ||
+                rxHz>Int64.MaxValue-rxConverterLoHz) return false;
+            long rfHz=rxHz+rxConverterLoHz;
+            if (rfHz%10!=0 || rfHz/10>9999999999L)
+            {
+                Log("VARAC CAT RF/10-Hz readback rejected: IF is not on a 10 Hz step or RF exceeds 10 BCD digits.");
+                return false;
+            }
+            catUnits=rfHz/10;
+            return true;
+        }
+
         private void ReplyAck(byte[] request,bool ok)
         {
             byte controller=request.Length>3?request[3]:(byte)0xE0;
@@ -1124,11 +1196,12 @@ namespace QO100CatProxyV503
 Add-Type -TypeDefinition $source -Language CSharp -ReferencedAssemblies 'System.dll'
 
 Write-Host ''
-Write-Host 'VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.03 SAT AUTO BAND-MAP' -ForegroundColor Cyan
+Write-Host 'VarAC QSY-CAT Proxy for IC-9700 by HBØTR V5.04 SAT AUTO BAND-MAP' -ForegroundColor Cyan
 Write-Host 'Author HBØTR Stefan Franz | https://www.qrz.com/db/HB0TR'
 Write-Host ('CAT/Frequency: {0}:{1}   Hamlib/PTT: {2}:{3}' -f $listenHost,$listenPort,$hamHost,$hamPort)
 Write-Host ('Radio: {0}   Baud: {1}' -f $radioPort,$baud)
 Write-Host ('RX/TX offset: {0} Hz' -f $rxTxDelta)
+Write-Host ('VarAC CAT frequency: {0}' -f $(if ($varacRf10Hz) {'QO-100 RF / 10 Hz'} else {'IC-9700 IF / 1 Hz'}))
 Write-Host ('Startup frequencies: {0}' -f $(if ($startupSetFreq) {'ON'} else {'OFF'}))
 if ($startupSetFreq) {
     Write-Host ('  QO-100 DL RF:   {0:F6} MHz' -f ($qo100DlRfHz/1000000.0))
@@ -1137,13 +1210,13 @@ if ($startupSetFreq) {
     Write-Host ('  D1/TX IF:       {0:F6} MHz' -f ($startupTxHz/1000000.0))
 }
 Write-Host ''
-Write-Host 'V5.03: SAT auto band-map + broader VarAC CAT frequency compatibility + automatic exit when VarAC CAT disconnects.' -ForegroundColor Yellow
+Write-Host 'V5.04: optional QO-100 RF/10-Hz CAT profile; automatic exit when VarAC CAT disconnects.' -ForegroundColor Yellow
 Write-Host ''
 
-$proxy = New-Object -TypeName QO100CatProxyV503.Proxy -ArgumentList @(
+$proxy = New-Object -TypeName QO100CatProxyV504.Proxy -ArgumentList @(
     $listenHost,$listenPort,$hamHost,$hamPort,$radioPort,$baud,$civAddr,
     $rxTxDelta,$rxMin,$rxMax,$txMin,$txMax,
     $startupSetFreq,$startupRxHz,$startupTxHz,
-    $ignoreMode,$logPath
+    $ignoreMode,$varacRf10Hz,$rxConverterLoHz,$logPath
 )
 try { $proxy.Run() } finally { $proxy.Dispose() }
