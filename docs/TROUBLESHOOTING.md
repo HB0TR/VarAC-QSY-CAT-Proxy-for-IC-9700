@@ -101,6 +101,12 @@ In `proxy_config.ini`, set `VARAC_CAT_RF_10HZ=1` and retain the correct `RX_CONV
 
 The stock `Icom IC-9700` CAT section has `SetFreqVfoA_param_length=10` with 1 Hz units. It cannot represent 10,489,595,000 Hz in five BCD bytes. Field logs with VarAC 15.0.18 showed values such as `25 00 B0 FB 00 FA 00`; these are not valid BCD and cannot be made safe by loosening the parser. VarAC's own Offset Hz help warns that using its offset together with frequency readback impairs operation. Use the custom RF/10-Hz profile with Offset Hz `0` instead.
 
+## RF/10-Hz profile shows an empty VarAC frequency and sends only 2,550 Hz
+
+The first VarAC 15.0.18 field test of V5.04's optional RF/10-Hz profile left the VarAC frequency field blank after startup, despite repeated `25 00` queries and valid 433.595 MHz radio readback. A one-slot change sent `25 00 55 02 00 00 00`, representing just 255 units (2,550 Hz) without the absolute frequency. The proxy rejected it safely. The current log does not include its outgoing reply to VarAC, so the readback failure still needs diagnosis. See [issue #2](https://github.com/HB0TR/VarAC-QSY-CAT-Proxy-for-IC-9700/issues/2). Do not use the RF/10-Hz profile as a validated QSY solution yet.
+
+For a controlled diagnostic without transmitting, try the stock `Icom IC-9700` CAT section with `VARAC_CAT_RF_10HZ=0`, VarAC Offset Hz `0`, readback every 2 seconds, and manual entry of **433.595 MHz IF**. A valid one-slot up request should have BCD payload `50 75 59 33 04` (433,597,550 Hz) and trigger the normal five-step SAT QSY. This displays IF rather than 10 GHz RF in VarAC.
+
 ## D0/RX changes but D1/TX does not
 
 Expected QSY log:
