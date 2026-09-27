@@ -14,7 +14,7 @@ The optional `VARAC_CAT_RF_10HZ=1` mode lets VarAC display and QSY at 10,489 MHz
 
 The setting defaults to `0` for V5.03-compatible 1 Hz IF control. The new mode rejects malformed or out-of-window RF CAT commands instead of forwarding them to the IC-9700. Offline tests cover conversion, readback and safety bounds.
 
-**Field-test update (2026-09-27):** In the first VarAC 15.0.18 test, RF/10-Hz readback polls reached the proxy but VarAC's frequency field stayed empty. A slot change then sent only 255 CAT units (2,550 Hz without an absolute base), correctly rejected by the proxy. This RF mode is **not yet validated for live QSY**; see [issue #2](https://github.com/HB0TR/VarAC-QSY-CAT-Proxy-for-IC-9700/issues/2). For a controlled IF-only diagnostic, use the stock Icom CAT rig with `VARAC_CAT_RF_10HZ=0`, VarAC Offset Hz `0`, and a manual 433,595,000 Hz entry without transmit.
+**Field-test update (2026-09-27):** In the first VarAC 15.0.18 test, RF/10-Hz readback polls reached the proxy but VarAC's frequency field stayed empty. Selecting the QO-100 preset after startup did not produce an absolute CAT write in the captured log; a later slot change sent only 255 CAT units (2,550 Hz without an absolute base), correctly rejected by the proxy. To isolate readback, temporarily switch **Read frequency every** OFF, restart VarAC, select the QO-100 preset, and then try one slot change without transmitting. This RF mode is **not yet validated for live QSY**; see [issue #2](https://github.com/HB0TR/VarAC-QSY-CAT-Proxy-for-IC-9700/issues/2). For a controlled IF-only diagnostic, use the stock Icom CAT rig with `VARAC_CAT_RF_10HZ=0`, VarAC Offset Hz `0`, and a manual 433,595,000 Hz entry without transmit.
 
 ### V5.03 CAT compatibility and shutdown retained
 
@@ -148,7 +148,7 @@ Host:              127.0.0.1
 Port:              9701
 Mode:              USB-D
 Offset Hz:         0
-Read frequency:    ON, every 2 seconds
+Read frequency:    OFF for the next diagnostic test; RF readback is not yet validated
 ```
 
 Enter/display the **RF** downlink frequency, for example 10,489.595 MHz. The new VarAC CAT section uses `SetFreqVfoA_hz_res=10` and `ReadFreqVfoA_Result_hz_res=10`: both directions carry 10 Hz units inside the ten-digit Icom BCD payload. The proxy performs the frequency translation:
