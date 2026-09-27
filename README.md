@@ -12,7 +12,9 @@ A Windows CAT/PTT proxy for **VarAC + VARA SAT + Icom IC-9700** in a QO-100 tran
 
 The optional `VARAC_CAT_RF_10HZ=1` mode lets VarAC display and QSY at 10,489 MHz while the proxy tunes the IC-9700 at the 433 MHz RX IF and corresponding 144 MHz TX IF. Use the matching [VarAC CAT section](docs/VarAC-QO100-RF10Hz-CAT.ini) and set VarAC **Offset Hz to 0**. Its 10 Hz CAT resolution divides the 11-digit RF frequency before fitting it in Icom's five BCD bytes; the proxy restores Hz and subtracts `RX_CONVERTER_LO_HZ`.
 
-The setting defaults to `0` for V5.03-compatible 1 Hz IF control. The new mode rejects malformed or out-of-window RF CAT commands instead of forwarding them to the IC-9700. Offline tests cover conversion, readback and safety bounds. Live operation with VarAC 15.0.18 still needs station validation.
+The setting defaults to `0` for V5.03-compatible 1 Hz IF control. The new mode rejects malformed or out-of-window RF CAT commands instead of forwarding them to the IC-9700. Offline tests cover conversion, readback and safety bounds.
+
+**Field-test update (2026-09-27):** In the first VarAC 15.0.18 test, RF/10-Hz readback polls reached the proxy but VarAC's frequency field stayed empty. A slot change then sent only 255 CAT units (2,550 Hz without an absolute base), correctly rejected by the proxy. This RF mode is **not yet validated for live QSY**; see [issue #2](https://github.com/HB0TR/VarAC-QSY-CAT-Proxy-for-IC-9700/issues/2). For a controlled IF-only diagnostic, use the stock Icom CAT rig with `VARAC_CAT_RF_10HZ=0`, VarAC Offset Hz `0`, and a manual 433,595,000 Hz entry without transmit.
 
 ### V5.03 CAT compatibility and shutdown retained
 
