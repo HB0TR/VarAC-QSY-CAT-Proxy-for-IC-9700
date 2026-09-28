@@ -14,7 +14,7 @@ The optional `VARAC_CAT_RF_10HZ=1` mode lets VarAC display and QSY at 10,489 MHz
 
 The setting defaults to `0` for V5.03-compatible 1 Hz IF control. The new mode rejects malformed or out-of-window RF CAT commands instead of forwarding them to the IC-9700. Offline tests cover conversion, readback and safety bounds.
 
-**Field-test update (2026-09-27):** In the first VarAC 15.0.18 test, RF/10-Hz readback polls reached the proxy but VarAC's frequency field stayed empty. Selecting the QO-100 preset after startup did not produce an absolute CAT write in the captured log; a later slot change sent only 255 CAT units (2,550 Hz without an absolute base), correctly rejected by the proxy. To isolate readback, temporarily switch **Read frequency every** OFF, restart VarAC, select the QO-100 preset, and then try one slot change without transmitting. This RF mode is **not yet validated for live QSY**; see [issue #2](https://github.com/HB0TR/VarAC-QSY-CAT-Proxy-for-IC-9700/issues/2). For a controlled IF-only diagnostic, use the stock Icom CAT rig with `VARAC_CAT_RF_10HZ=0`, VarAC Offset Hz `0`, and a manual 433,595,000 Hz entry without transmit.
+**Field-test update (2026-09-28):** Lutz confirmed RF/10-Hz QSY on VarAC 15.0.18 / IC-9700 1.50 after selecting the saved 10,489.595 MHz QO-100 frequency once at VarAC startup. With readback OFF, the log records a valid absolute `25 00` write, then a one-slot-up write; the proxy set D0/RX to 433.597550 MHz and D1/TX to 144.097550 MHz, each acknowledged by the radio. Screenshots show 10,489.595 MHz initially and 10,489.597550 MHz after QSY. The operator also reports that enabling **Load last frequency** avoids the manual startup selection and that periodic readback works with dropdown/slot QSY once VarAC has a starting frequency. Turning the radio VFO knob then stops VarAC frequency readback; that remaining issue needs a focused log with polling ON. See [issue #2](https://github.com/HB0TR/VarAC-QSY-CAT-Proxy-for-IC-9700/issues/2).
 
 ### V5.03 CAT compatibility and shutdown retained
 
@@ -148,7 +148,8 @@ Host:              127.0.0.1
 Port:              9701
 Mode:              USB-D
 Offset Hz:         0
-Read frequency:    OFF for the next diagnostic test; RF readback is not yet validated
+Load last frequency: ON, or choose the QO-100 preset once after VarAC starts
+Read frequency:    ON every 2 seconds for normal use; VFO knob readback under investigation
 ```
 
 Enter/display the **RF** downlink frequency, for example 10,489.595 MHz. The new VarAC CAT section uses `SetFreqVfoA_hz_res=10` and `ReadFreqVfoA_Result_hz_res=10`: both directions carry 10 Hz units inside the ten-digit Icom BCD payload. The proxy performs the frequency translation:
@@ -387,7 +388,7 @@ V5.04 retains the V5.03 SAT band-map, full-duplex control and CAT shutdown. Exis
 
 Changes to be aware of:
 
-- In RF/10-Hz mode, VarAC Offset Hz must be `0` and frequency readback should be enabled.
+- In RF/10-Hz mode, VarAC Offset Hz must be `0`; load a saved frequency at startup or select the QO-100 preset once. Periodic readback works for preset and slot QSY in the field report, while VFO knob readback remains under investigation.
 - The proxy validates RF/10-Hz writes against both IF safety windows and rejects unknown frequency forms.
 - The launcher and configuration headers identify V5.04.
 
