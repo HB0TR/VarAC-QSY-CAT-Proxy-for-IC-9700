@@ -94,16 +94,19 @@ Host:              127.0.0.1
 Port:              9701
 Mode:              USB-D
 Offset Hz:         0
-Read frequency:    OFF for the next RF/10-Hz diagnostic (ON is unvalidated)
+Load last frequency: ON, or choose the QO-100 preset once after launch
+Read frequency:    ON / 2 seconds; VFO knob readback under investigation
 ```
 
 In `proxy_config.ini`, set `VARAC_CAT_RF_10HZ=1` and retain the correct `RX_CONVERTER_LO_HZ`. A 10,489.595 MHz RF request should yield 1,048,959,500 CAT units and a 433.595 MHz RX IF. The log should show all five SAT QSY steps. Keep PTT disabled while checking the first slot changes.
 
 The stock `Icom IC-9700` CAT section has `SetFreqVfoA_param_length=10` with 1 Hz units. It cannot represent 10,489,595,000 Hz in five BCD bytes. Field logs with VarAC 15.0.18 showed values such as `25 00 B0 FB 00 FA 00`; these are not valid BCD and cannot be made safe by loosening the parser. VarAC's own Offset Hz help warns that using its offset together with frequency readback impairs operation. Use the custom RF/10-Hz profile with Offset Hz `0` instead.
 
-## RF/10-Hz profile shows an empty VarAC frequency and sends only 2,550 Hz
+## RF/10-Hz startup selection and VFO readback
 
-The first VarAC 15.0.18 field test of V5.04's optional RF/10-Hz profile left the VarAC frequency field blank after startup, despite repeated `25 00` queries and valid 433.595 MHz radio readback. A one-slot change sent `25 00 55 02 00 00 00`, representing just 255 units (2,550 Hz) without the absolute frequency. The proxy rejected it safely. The current log does not include its outgoing reply to VarAC, so the readback failure still needs diagnosis. The tester normally selects the QO-100 preset after starting VarAC; the captured log still contains no absolute frequency write before the 255-unit slot change. For the next diagnostic, switch VarAC frequency readback OFF temporarily, restart VarAC, select the 10,489.595 MHz preset, and try one slot change without transmitting. See [issue #2](https://github.com/HB0TR/VarAC-QSY-CAT-Proxy-for-IC-9700/issues/2). Do not use the RF/10-Hz profile as a validated QSY solution yet.
+An initial VarAC 15.0.18 test had a blank frequency at startup; one slot change sent `25 00 55 02 00 00 00` (255 CAT units = 2,550 Hz) without an absolute base. The proxy rejected that out-of-window request safely. In the follow-up with readback OFF, selecting the saved QO-100 preset after starting VarAC generated an absolute `25 00` write for 10,489.595 MHz RF. A subsequent slot-up wrote 10,489.597550 MHz RF; the proxy tuned D0/RX to 433.597550 MHz and D1/TX to 144.097550 MHz, both acknowledged `FB`. Screenshots confirmed the VarAC display and slot change. Select the QO-100 preset once on startup or enable **Load last frequency**. The operator reports that readback every 2 seconds works for dropdown and slot QSY after that startup step.
+
+**Remaining VFO issue:** The operator reports that turning the IC-9700 VFO knob prevents the changed frequency from appearing in VarAC even after successful startup. This was not reproduced in the readback-OFF log above. For a focused log, turn readback every 2 seconds ON; keep the RF/10-Hz rig, Offset Hz `0`, and **Load last frequency** ON (or select the saved preset once). Confirm the starting display, turn D0/RX VFO one small step within the configured RX IF window without transmitting, note the IC-9700 RX frequency including Hz, wait at least three polls, then close VarAC without another dropdown selection. Send the full proxy log and a screenshot of the VarAC display. Check for `VARAC CAT RF/10-Hz readback rejected`, query/CI-V errors, and the exact D0/RX frequency before changing readback behavior. See [issue #2](https://github.com/HB0TR/VarAC-QSY-CAT-Proxy-for-IC-9700/issues/2).
 
 For a controlled diagnostic without transmitting, try the stock `Icom IC-9700` CAT section with `VARAC_CAT_RF_10HZ=0`, VarAC Offset Hz `0`, readback every 2 seconds, and manual entry of **433.595 MHz IF**. A valid one-slot up request should have BCD payload `50 75 59 33 04` (433,597,550 Hz) and trigger the normal five-step SAT QSY. This displays IF rather than 10 GHz RF in VarAC.
 
@@ -159,7 +162,7 @@ V5.04 initializes USB-D itself. VarAC command `0x26` is acknowledged locally by 
 
 ## Frequency is not displayed in VarAC
 
-Enable CAT frequency readback in VarAC. A configuration with `RigCatFreqRead=OFF` intentionally disables the periodic read request.
+Enable CAT frequency readback in VarAC. A configuration with `RigCatFreqRead=OFF` intentionally disables the periodic read request. First load the saved frequency after VarAC starts or enable **Load last frequency**.
 
 For RF/10-Hz mode the recommended setting is:
 
